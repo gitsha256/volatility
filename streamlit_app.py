@@ -3,14 +3,36 @@ from __future__ import annotations
 import streamlit as st
 
 from volatility_scanner.config import ScannerConfig
-from volatility_scanner.data import NSEDataProvider, SampleMarketDataProvider
+from volatility_scanner.data import (
+    FyersDataError,
+    FyersDataProvider,
+    MarketSnapshot,
+    NSEDataProvider,
+    OptionQuote,
+    SampleMarketDataProvider,
+)
 from volatility_scanner.strategy import NiftyScanner, OpportunityScore
 
 
-@st.cache_data(ttl=30)
-def get_market_snapshot(data_source: str):
+def get_market_snapshot(data_source: str) -> MarketSnapshot:
+    if data_source == "FYERS":
+        return FyersDataProvider().fetch_snapshot(symbol="NIFTY")
     provider = NSEDataProvider() if data_source == "NSE API" else SampleMarketDataProvider()
     return provider.fetch_snapshot(symbol="NIFTY")
+
+
+def find_option_quote(snapshot: MarketSnapshot, strike: float) -> OptionQuote | None:
+    return min(snapshot.option_chain, key=lambda quote: abs(quote.strike - strike), default=None)
+
+
+def usable_quote(bid: float | None, ask: float | None) -> bool:
+    return bid is not None and ask is not None and bid >= 0 and ask > 0 and ask >= bid
+
+
+def iv_as_decimal(value: float | None) -> float | None:
+    if value is None or value <= 0:
+        return None
+    return value / 100 if value > 1 else value
 
 
 def main() -> None:
@@ -46,8 +68,12 @@ def main() -> None:
 
     with st.sidebar:
         st.subheader("Scanner inputs")
-        data_source = st.selectbox("Market data", ["Sample market", "NSE API"])
-        snapshot = get_market_snapshot(data_source)
+        data_source = st.selectbox("Market data", ["FYERS", "Sample market", "NSE API"])
+        try:
+            snapshot = get_market_snapshot(data_source)
+        except FyersDataError as error:
+            st.error(str(error))
+            st.stop()
 
         with st.form("scanner_form"):
             futures_price = st.number_input(
@@ -56,40 +82,107 @@ def main() -> None:
             strike = st.number_input(
                 "Strike", min_value=1.0, value=float(round(futures_price / 25.0) * 25.0), step=25.0
             )
-            iv = st.number_input("Market IV", min_value=0.001, value=0.14, step=0.01, format="%.4f")
+            strategies = st.multiselect(
+                "Strategies",
+                ["long_straddle", "long_call", "long_put"],
+                default=["long_straddle", "long_call", "long_put"],
+            )
+            selected_quote = find_option_quote(snapshot, strike)
+            available_ivs: list[float] = []
+            if selected_quote is not None:
+                if "long_call" in strategies or "long_straddle" in strategies:
+                    ce_iv = iv_as_decimal(selected_quote.ce_iv)
+                    if ce_iv is not None:
+                        available_ivs.append(ce_iv)
+                if "long_put" in strategies or "long_straddle" in strategies:
+                    pe_iv = iv_as_decimal(selected_quote.pe_iv)
+                    if pe_iv is not None:
+                        available_ivs.append(pe_iv)
+            chain_iv = sum(available_ivs) / len(available_ivs) if available_ivs else None
+            iv = st.number_input(
+                "Market IV (decimal)",
+                min_value=0.001,
+                value=chain_iv or 0.14,
+                step=0.01,
+                format="%.4f",
+                help="FYERS IV is prefilled when available; otherwise enter a decimal such as 0.14 for 14%.",
+            )
             forecast_rv = st.number_input(
                 "Forecast RV", min_value=0.001, value=0.18, step=0.01, format="%.4f"
             )
             left, right = st.columns(2)
             minutes_left = left.number_input("Minutes left", min_value=0.0, value=180.0, step=15.0)
             expiry_days = right.number_input("Expiry days", min_value=0.01, value=7.0, step=1.0)
-            option_type = st.selectbox("Option type", ["CE", "PE"])
-            strategies = st.multiselect(
-                "Strategies",
-                ["long_straddle", "long_call", "long_put"],
-                default=["long_straddle", "long_call", "long_put"],
-            )
             submitted = st.form_submit_button("Run scan", type="primary", use_container_width=True)
 
     if snapshot.warning:
         st.warning(snapshot.warning)
 
-    st.caption(f"Data: **{snapshot.source.upper()}** · NIFTY futures: **{futures_price:,.2f}**")
+    expiry_label = snapshot.expiry_data[0]["date"] if snapshot.expiry_data else "not provided"
+    st.caption(
+        f"Data: **{snapshot.source.upper()}** · NIFTY futures: **{futures_price:,.2f}** "
+        f"· Chain expiry: **{expiry_label}**"
+    )
 
     if submitted:
-        scanner = NiftyScanner(ScannerConfig())
-        results = scanner.evaluate_all_strategies(
-            strategies=strategies,
-            futures_price=futures_price,
-            strike=strike,
-            iv=iv,
-            forecast_rv=forecast_rv,
-            expiry_days=expiry_days,
-            remaining_minutes=minutes_left,
-            option_type=option_type,
-            bid=100.0,
-            ask=120.0,
-        )
+        selected_quote = find_option_quote(snapshot, strike)
+        try:
+            scanner = NiftyScanner(ScannerConfig())
+            results: list[OpportunityScore] = []
+            if data_source == "FYERS" and selected_quote is None:
+                st.error("No FYERS option-chain strike is close to the selected strike.")
+                st.stop()
+            for strategy in strategies:
+                option_type = "PE" if strategy == "long_put" else "CE"
+                strategy_iv = iv
+                bid, ask = 100.0, 120.0
+                if selected_quote is not None:
+                    live_iv = iv_as_decimal(
+                        selected_quote.pe_iv if option_type == "PE" else selected_quote.ce_iv
+                    )
+                    if strategy == "long_straddle":
+                        ce_iv = iv_as_decimal(selected_quote.ce_iv)
+                        pe_iv = iv_as_decimal(selected_quote.pe_iv)
+                        if ce_iv is not None and pe_iv is not None:
+                            live_iv = (ce_iv + pe_iv) / 2.0
+                    if live_iv is not None:
+                        strategy_iv = live_iv
+
+                if data_source == "FYERS":
+                    if strategy == "long_straddle":
+                        if not (
+                            usable_quote(selected_quote.ce_bid, selected_quote.ce_ask)
+                            and usable_quote(selected_quote.pe_bid, selected_quote.pe_ask)
+                        ):
+                            st.error("FYERS did not return valid CE and PE bid/ask quotes for this straddle.")
+                            st.stop()
+                        bid = float(selected_quote.ce_bid) + float(selected_quote.pe_bid)
+                        ask = float(selected_quote.ce_ask) + float(selected_quote.pe_ask)
+                    else:
+                        selected_bid = selected_quote.ce_bid if option_type == "CE" else selected_quote.pe_bid
+                        selected_ask = selected_quote.ce_ask if option_type == "CE" else selected_quote.pe_ask
+                        if not usable_quote(selected_bid, selected_ask):
+                            st.error(f"FYERS did not return a valid {option_type} bid/ask quote at this strike.")
+                            st.stop()
+                        bid, ask = float(selected_bid), float(selected_ask)
+
+                results.append(
+                    scanner.evaluate_single_strategy(
+                        strategy=strategy,
+                        futures_price=futures_price,
+                        strike=strike,
+                        iv=strategy_iv,
+                        forecast_rv=forecast_rv,
+                        expiry_days=expiry_days,
+                        remaining_minutes=minutes_left,
+                        option_type=option_type,
+                        bid=bid,
+                        ask=ask,
+                    )
+                )
+        except ValueError as error:
+            st.error(f"Cannot scan these inputs: {error}")
+            st.stop()
         st.session_state["scan_results"] = results
 
     results: list[OpportunityScore] = st.session_state.get("scan_results", [])

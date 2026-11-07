@@ -3,3 +3,6 @@ __pycache__/
 *.pyo
 scanner.db
 .venv/
+.env
+.env.*
+.streamlit/secrets.toml
