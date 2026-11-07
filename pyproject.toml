@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nifty-volatility-scanner"
+version = "0.1.0"
+description = "NIFTY intraday options volatility scanner and decision support engine"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Copilot" }]
+dependencies = []
+
+[tool.setuptools]
+packages = ["volatility_scanner"]
