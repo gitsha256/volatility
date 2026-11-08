@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
+from curl_cffi import requests as curl_requests, CurlHttpVersion
+from .pricing import invert_black76_iv
+
+
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 @dataclass
 class OptionQuote:
@@ -18,6 +27,12 @@ class OptionQuote:
     pe_ask: float | None = None
     ce_iv: float | None = None
     pe_iv: float | None = None
+    ce_iv_source: str = "unavailable"
+    pe_iv_source: str = "unavailable"
+    ce_symbol: str | None = None
+    pe_symbol: str | None = None
+    ce_updated_at: float = 0.0
+    pe_updated_at: float = 0.0
 
 
 @dataclass
@@ -28,10 +43,50 @@ class MarketSnapshot:
     source: str = "sample"
     warning: str | None = None
     expiry_data: list[dict[str, str]] = field(default_factory=list)
+    last_update: float = 0.0
+    feed_status: str = "snapshot"
+    http_version: str = ""
+    futures_updated_at: float = 0.0
 
 
 class FyersDataError(RuntimeError):
     """Raised when FYERS configuration or a market-data response is invalid."""
+
+
+def derive_missing_ivs(snapshot: MarketSnapshot, time_to_expiry: float) -> None:
+    """Estimate Black-76 IV using same-expiry put-call parity at zero rate."""
+    if not math.isfinite(time_to_expiry) or time_to_expiry <= 0:
+        return
+    def valid(bid: float | None, ask: float | None) -> bool:
+        return (bid is not None and ask is not None and math.isfinite(bid)
+                and math.isfinite(ask) and 0 < bid <= ask)
+
+    paired = [q for q in snapshot.option_chain if valid(q.ce_bid, q.ce_ask) and valid(q.pe_bid, q.pe_ask)]
+    if not paired:
+        return
+    atm = min(paired, key=lambda q: abs((q.ce_bid + q.ce_ask) - (q.pe_bid + q.pe_ask)))
+    forward = atm.strike + (atm.ce_bid + atm.ce_ask - atm.pe_bid - atm.pe_ask) / 2.0
+    if not math.isfinite(forward) or forward <= 0:
+        return
+    for quote in snapshot.option_chain:
+        for leg in ("ce", "pe"):
+            iv = getattr(quote, leg + "_iv")
+            if iv is not None and math.isfinite(iv) and iv > 0 and getattr(quote, leg + "_iv_source") != "derived":
+                continue
+            setattr(quote, leg + "_iv", None)
+            setattr(quote, leg + "_iv_source", "unavailable")
+            bid, ask = getattr(quote, leg + "_bid"), getattr(quote, leg + "_ask")
+            if not valid(bid, ask):
+                continue
+            try:
+                iv = invert_black76_iv(
+                    futures_price=forward, strike=quote.strike, market_price=(bid + ask) / 2.0,
+                    time_to_expiry=time_to_expiry, option_type=leg.upper(),
+                )
+            except ValueError:
+                continue
+            setattr(quote, leg + "_iv", iv)
+            setattr(quote, leg + "_iv_source", "derived")
 
 
 class MarketDataProvider:
@@ -54,6 +109,8 @@ class SampleMarketDataProvider(MarketDataProvider):
                     pe_ask=max(34.0, (strike - futures) * 0.18 + 24.0),
                     ce_iv=0.14,
                     pe_iv=0.14,
+                    ce_iv_source="sample",
+                    pe_iv_source="sample",
                 )
             )
         return MarketSnapshot(symbol=symbol, futures_price=futures, option_chain=option_chain, source="sample")
@@ -130,16 +187,23 @@ class FyersDataProvider(MarketDataProvider):
         strike_count: int = 10,
         timeout: float = 10.0,
     ) -> None:
-        self.client_id = client_id or os.getenv("FYERS_CLIENT_ID")
-        self.access_token = access_token or os.getenv("FYERS_ACCESS_TOKEN")
-        self.futures_symbol = futures_symbol or os.getenv("FYERS_NIFTY_FUTURES_SYMBOL")
+        # Read only this repository's file; never expand references to other secrets.
+        file_env = dotenv_values(ENV_FILE, interpolate=False, encoding="utf-8-sig")
+        self.client_id = client_id or os.getenv("FYERS_CLIENT_ID", file_env.get("FYERS_CLIENT_ID"))
+        self.access_token = access_token or os.getenv("FYERS_ACCESS_TOKEN", file_env.get("FYERS_ACCESS_TOKEN"))
+        self.futures_symbol = futures_symbol or os.getenv(
+            "FYERS_NIFTY_FUTURES_SYMBOL", file_env.get("FYERS_NIFTY_FUTURES_SYMBOL")
+        )
         self.option_chain_symbol = option_chain_symbol
         self.strike_count = strike_count
         self.timeout = timeout
+        self._http = None
+        self.http_version = ""
 
         if not self.client_id or not self.access_token:
             raise FyersDataError(
-                "Set FYERS_CLIENT_ID and FYERS_ACCESS_TOKEN before selecting the FYERS data source."
+                "Set FYERS_CLIENT_ID and FYERS_ACCESS_TOKEN in .env or the environment "
+                "before selecting the FYERS data source."
             )
         if not self.futures_symbol:
             raise FyersDataError(
@@ -150,26 +214,34 @@ class FyersDataProvider(MarketDataProvider):
             raise ValueError("strike_count must be at least 1.")
 
     def _fetch_json(self, path: str, params: dict[str, str | int]) -> dict[str, Any]:
-        query = urllib.parse.urlencode(params)
-        request = urllib.request.Request(
-            f"{self.DATA_API}{path}?{query}",
+        if self._http is None:
+            self._http = curl_requests.Session(http_version=CurlHttpVersion.V3)
+        request_options = dict(
+            params=params, timeout=self.timeout, allow_redirects=False,
             headers={
                 "Authorization": f"{self.client_id}:{self.access_token}",
-                "Content-Type": "application/json",
-                "version": "3",
+                "Content-Type": "application/json", "version": "3", "User-Agent": "Mozilla/5.0",
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                body = response.read().decode("utf-8")
-        except urllib.error.HTTPError as error:
-            raise FyersDataError(f"FYERS data request failed with HTTP {error.code}.") from error
-        except (urllib.error.URLError, TimeoutError) as error:
-            raise FyersDataError("Could not connect to FYERS market data.") from error
+            response = self._http.get(f"{self.DATA_API}{path}", **request_options)
+        except curl_requests.RequestsError:
+            # Some networks block QUIC instead of allowing negotiation to finish.
+            try:
+                self._http.http_version = CurlHttpVersion.V2TLS
+                response = self._http.get(f"{self.DATA_API}{path}", **request_options)
+            except curl_requests.RequestsError:
+                raise FyersDataError("Could not connect to FYERS market data.") from None
+        self.http_version = {
+            CurlHttpVersion.V3: "HTTP/3", CurlHttpVersion.V2_0: "HTTP/2",
+            CurlHttpVersion.V1_1: "HTTP/1.1",
+        }.get(response.http_version, "HTTP")
+        if response.status_code != 200:
+            raise FyersDataError(f"FYERS data request failed with HTTP {response.status_code}.")
 
         try:
-            payload = json.loads(body)
-        except json.JSONDecodeError as error:
+            payload = response.json()
+        except ValueError as error:
             raise FyersDataError("FYERS returned a non-JSON market-data response.") from error
         if not isinstance(payload, dict):
             raise FyersDataError("FYERS returned an unexpected market-data response.")
@@ -183,7 +255,8 @@ class FyersDataProvider(MarketDataProvider):
         if value is None or value == "":
             return None
         try:
-            return float(value)
+            number = float(value)
+            return number if math.isfinite(number) else None
         except (TypeError, ValueError):
             return None
 
@@ -216,9 +289,13 @@ class FyersDataProvider(MarketDataProvider):
             if iv is not None and iv > 1:
                 iv /= 100.0
             if option_type == "CE":
+                quote.ce_symbol = item.get("symbol")
                 quote.ce_bid, quote.ce_ask, quote.ce_iv = bid, ask, iv
+                quote.ce_iv_source = "FYERS" if iv is not None and iv > 0 else "unavailable"
             else:
+                quote.pe_symbol = item.get("symbol")
                 quote.pe_bid, quote.pe_ask, quote.pe_iv = bid, ask, iv
+                quote.pe_iv_source = "FYERS" if iv is not None and iv > 0 else "unavailable"
 
         if not quotes_by_strike:
             raise FyersDataError("FYERS returned no valid call/put option-chain rows.")
@@ -247,10 +324,16 @@ class FyersDataProvider(MarketDataProvider):
             if isinstance(item, dict)
         ] if isinstance(expiry_data, list) else []
 
-        return MarketSnapshot(
+        snapshot = MarketSnapshot(
             symbol=symbol,
             futures_price=futures_price,
             option_chain=sorted(quotes_by_strike.values(), key=lambda quote: quote.strike),
             source="fyers",
             expiry_data=normalized_expiries,
+            last_update=time.time(),
+            http_version=self.http_version,
         )
+        expiry = self._number(normalized_expiries[0]["expiry"]) if normalized_expiries else None
+        if expiry is not None:
+            derive_missing_ivs(snapshot, (expiry - time.time()) / (365.0 * 86400.0))
+        return snapshot

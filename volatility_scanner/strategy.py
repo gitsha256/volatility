@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Iterable
 
 from .config import ScannerConfig
@@ -51,6 +52,16 @@ class NiftyScanner:
         ask: float,
         rate: float = 0.0,
     ) -> OpportunityScore:
+        if not all(math.isfinite(value) for value in (
+            futures_price, strike, iv, forecast_rv, expiry_days, remaining_minutes, bid, ask, rate
+        )):
+            raise ValueError("Scanner inputs must be finite numbers.")
+        if futures_price <= 0 or strike <= 0:
+            raise ValueError("Futures price and strike must be positive.")
+        if expiry_days < 0 or remaining_minutes < 0:
+            raise ValueError("Expiry days and remaining minutes cannot be negative.")
+        if bid < 0 or ask <= 0 or ask < bid:
+            raise ValueError("Quotes must satisfy 0 <= bid <= ask and ask > 0.")
         if iv <= 0 or forecast_rv <= 0:
             raise ValueError("IV and forecast RV must both be positive.")
 
@@ -90,7 +101,10 @@ class NiftyScanner:
 
         confidence = 1.0 - min(1.0, abs(iv - forecast_rv) / max(forecast_rv, 1e-6))
         qualifies = (
-            spread > self.config.min_iv_rv_spread / 100.0
+            remaining_minutes > 0
+            and expiry_days > 0
+            and expected_pnl > 0
+            and spread > self.config.min_iv_rv_spread / 100.0
             and variance_ratio >= self.config.min_variance_ratio
             and (strategy != "long_straddle" or gamma_theta < 0)
             and direction_filter == "pass"

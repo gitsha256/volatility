@@ -7,9 +7,9 @@ name = "nifty-volatility-scanner"
 version = "0.1.0"
 description = "NIFTY intraday options volatility scanner and decision support engine"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 authors = [{ name = "Copilot" }]
-dependencies = []
+dependencies = ["python-dotenv>=1.0,<2", "curl_cffi>=0.14,<1", "fyers-apiv3==3.2.1"]
 
 [tool.setuptools]
 packages = ["volatility_scanner"]

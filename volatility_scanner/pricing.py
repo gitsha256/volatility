@@ -61,6 +61,10 @@ def invert_black76_iv(
     upper: float = 5.0,
     max_iterations: int = 200,
 ) -> float:
+    if not all(math.isfinite(x) for x in (futures_price, strike, market_price, time_to_expiry, rate, lower, upper)):
+        raise ValueError("IV inputs must be finite.")
+    if not 0 < lower < upper or max_iterations < 1:
+        raise ValueError("Invalid IV search bounds or iteration count.")
     if market_price <= 0:
         raise ValueError("Market price must be positive.")
 
@@ -76,9 +80,14 @@ def invert_black76_iv(
 
     lo = lower
     hi = upper
+    if f(lo) >= 0 or f(hi) <= 0:
+        raise ValueError("Market price is outside the IV search range.")
     for _ in range(max_iterations):
         mid = 0.5 * (lo + hi)
-        if f(mid) < 0:
+        error = f(mid)
+        if abs(error) < 1e-8:
+            return mid
+        if error < 0:
             lo = mid
         else:
             hi = mid

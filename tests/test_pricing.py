@@ -4,6 +4,12 @@ from volatility_scanner.pricing import black76_price, invert_black76_iv
 
 
 class TestPricing(unittest.TestCase):
+    def test_iv_rejects_impossible_prices(self):
+        for price in (200, float("nan")):
+            with self.subTest(price=price), self.assertRaises(ValueError):
+                invert_black76_iv(futures_price=100, strike=100, market_price=price,
+                                  time_to_expiry=.1, option_type="CE")
+
     def test_black76_round_trip(self):
         futures_price = 25000.0
         strike = 25000.0
