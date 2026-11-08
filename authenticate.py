@@ -3,17 +3,15 @@ from __future__ import annotations
 
 import getpass
 import hashlib
-import json
 import os
 import secrets
-import urllib.error
 import urllib.parse
-import urllib.request
 import webbrowser
 
-from dotenv import dotenv_values, set_key
+from dotenv import dotenv_values
 
 from volatility_scanner.data import ENV_FILE
+from volatility_scanner.auth import AuthError, ensure_access_token, request_tokens, save_tokens
 
 
 def auth_code_from_redirect(url: str, redirect_uri: str, state: str) -> str:
@@ -30,36 +28,25 @@ def auth_code_from_redirect(url: str, redirect_uri: str, state: str) -> str:
     return codes[0]
 
 
-def exchange_code(client_id: str, app_secret: str, code: str) -> str:
+def exchange_code(client_id: str, app_secret: str, code: str) -> dict:
     payload = {
         "grant_type": "authorization_code",
         "appIdHash": hashlib.sha256(f"{client_id}:{app_secret}".encode()).hexdigest(),
         "code": code,
     }
-    request = urllib.request.Request(
-        "https://api-t1.fyers.in/api/v3/validate-authcode",
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            result = json.load(response)
-    except urllib.error.HTTPError as error:
-        raise ValueError(f"FYERS rejected token exchange (HTTP {error.code}). Check app details and retry login.") from None
-    except (urllib.error.URLError, TimeoutError, ValueError):
-        raise ValueError("Could not obtain a valid response from FYERS. Retry login.") from None
-    token = result.get("access_token") if isinstance(result, dict) else None
-    if not isinstance(result, dict) or result.get("s") != "ok" or not isinstance(token, str) or not token.strip():
-        raise ValueError("FYERS did not issue an access token. Check app details and retry login.")
-    return token
+    return request_tokens("validate-authcode", payload)
 
 
-def main() -> None:
+def main(*, refresh: bool = False, totp: bool = False) -> None:
     values = dotenv_values(ENV_FILE, interpolate=False, encoding="utf-8-sig")
     client_id = os.getenv("FYERS_CLIENT_ID", values.get("FYERS_CLIENT_ID"))
     if not client_id:
         raise ValueError("Set FYERS_CLIENT_ID in .env first.")
+    if refresh or totp:
+        ensure_access_token(client_id, os.getenv("FYERS_ACCESS_TOKEN", values.get("FYERS_ACCESS_TOKEN")), ENV_FILE,
+                            force=True, auth_mode="totp" if totp else None)
+        print("Access token renewed and saved. Dashboard reconnects automatically.")
+        return
     redirect_uri = os.getenv("FYERS_REDIRECT_URI", values.get("FYERS_REDIRECT_URI")) or input(
         "Registered redirect URI [https://trade.fyers.in/api-login/redirect-uri/index.html]: "
     ).strip() or "https://trade.fyers.in/api-login/redirect-uri/index.html"
@@ -80,19 +67,24 @@ def main() -> None:
     webbrowser.open(login_url)
     returned_url = getpass.getpass("Paste the full redirected URL here (hidden): ")
     code = auth_code_from_redirect(returned_url, redirect_uri, state)
-    token = exchange_code(client_id, app_secret, code)
-    set_key(ENV_FILE, "FYERS_ACCESS_TOKEN", token, encoding="utf-8-sig")
-    print("Access token saved to .env. Restart the dashboard or rerun the scan.")
-    if "FYERS_ACCESS_TOKEN" in os.environ:
-        print("Remove the old FYERS_ACCESS_TOKEN environment variable; it overrides .env.")
+    tokens = exchange_code(client_id, app_secret, code)
+    save_tokens(ENV_FILE, tokens)
+    print("Tokens saved to .env. Dashboard reconnects automatically.")
+    print("To opt into TOTP login, configure FYERS_AUTH_MODE=totp and the TOTP setup fields in .env.")
 
 
 if __name__ == "__main__":
     try:
-        main()
-    except (ValueError, OSError) as error:
+        import argparse
+        parser = argparse.ArgumentParser(description="Sign in to FYERS or renew a saved token.")
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument("--refresh", action="store_true", help="Renew using the configured authentication mode.")
+        group.add_argument("--totp", action="store_true", help="Sign in using saved TOTP credentials without a browser.")
+        args = parser.parse_args()
+        main(refresh=args.refresh, totp=args.totp)
+    except (ValueError, OSError, AuthError) as error:
         # OSError text may include sensitive request details; do not print it.
-        print(str(error) if isinstance(error, ValueError) else "Could not read or save local configuration.")
+        print(str(error) if isinstance(error, (ValueError, AuthError)) else "Could not read or save local configuration.")
         raise SystemExit(1)
     except (KeyboardInterrupt, EOFError):
         print("Authentication cancelled. Existing token unchanged.")

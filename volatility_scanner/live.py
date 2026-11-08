@@ -23,6 +23,7 @@ class LiveFeed:
         self._last_tick = 0.0
         self._status = "connecting"
         self._closed = False
+        self.auth_failed = False
         self._socket = None
         self._symbols = {}
         for quote in self._snapshot.option_chain:
@@ -64,6 +65,8 @@ class LiveFeed:
     def _on_error(self, message):
         with self._lock:
             self._status = "stream error; check authentication, plan or connection"
+            if isinstance(message, dict) and message.get("code") in (-8, -15, -16, -17):
+                self.auth_failed = True
 
     def _on_close(self, message):
         with self._lock:
@@ -136,17 +139,22 @@ _feed_lock = threading.Lock()
 
 def get_live_snapshot(provider: FyersDataProvider) -> MarketSnapshot:
     global _feed, _identity
-    identity = hashlib.sha256(
-        f"{provider.client_id}:{provider.access_token}:{provider.futures_symbol}".encode()
-    ).digest()
     with _feed_lock:
+        if (_feed is not None and _feed.auth_failed
+                and provider.access_token == _feed.provider.access_token):
+            provider.refresh_access_token(force=True)
+        identity = hashlib.sha256(
+            f"{provider.client_id}:{provider.access_token}:{provider.futures_symbol}".encode()
+        ).digest()
         # Periodically refresh the strike universe and expiry, not prices on each rerun.
         if _feed is None or _identity != identity or time.time() - _feed.started > 300:
             if _feed is not None:
                 _feed.close()
             _feed = None
             _feed = LiveFeed(provider)
-            _identity = identity
+            _identity = hashlib.sha256(
+                f"{provider.client_id}:{provider.access_token}:{provider.futures_symbol}".encode()
+            ).digest()
         return _feed.snapshot()
 
 

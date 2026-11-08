@@ -46,6 +46,12 @@ The dashboard's **FYERS** data source uses the FYERS v3 market-data endpoints fo
 
 - `FYERS_CLIENT_ID` — your FYERS app ID
 - `FYERS_ACCESS_TOKEN` — an access token generated through FYERS' normal authentication flow
+- `FYERS_APP_SECRET` — app secret for initial login and token renewal
+- `FYERS_REFRESH_TOKEN` — saved automatically by the login helper
+- `FYERS_PIN` — your FYERS account PIN, required for automatic token renewal
+- `FYERS_AUTH_MODE` — `browser`, `totp`, or legacy `refresh`
+- `FYERS_USERNAME` — FYERS account login ID for TOTP login, separate from App ID
+- `FYERS_TOTP_SECRET` — Base32 setup secret for External 2FA TOTP, not a changing six-digit code
 - `FYERS_NIFTY_FUTURES_SYMBOL` — the active futures contract symbol from FYERS, such as `NSE:<contract>-FUT`
 
 Recommended local setup: copy the template to `.env` beside this README:
@@ -75,11 +81,90 @@ The helper reads optional `FYERS_APP_SECRET` and `FYERS_REDIRECT_URI` values fro
 Use the exact redirect URI registered in the FYERS API dashboard. The helper
 opens the login link in your browser. Sign in to FYERS,
 then paste the full redirected URL into the terminal's hidden prompt. The helper
-verifies the login state and saves the access token to `.env` only after a
-successful exchange. It never prints the token or writes the App Secret.
+verifies the login state and saves both access and refresh tokens to `.env` only
+after a successful exchange. It never prints tokens or writes the App Secret.
 Market-data requests automatically use the saved token, not the App Secret.
 Follow the [FYERS authentication flow](https://fyers.in/api-docs/v3/api/authentication/individual-app/authentication-flow).
-Run this again when the token expires. Then start or restart Streamlit.
+
+### Automatic token renewal
+
+For fresh daily TOTP login, see the opt-in setup below. It does not use the
+refresh-token API. The following refresh-token limitation applies to `refresh` mode.
+
+**Live verification (8 November 2026):** FYERS rejects the refresh endpoint with
+HTTP 400 / code -16: `Refresh token API is currently disabled to comply with SEBI
+regulations.` Automatic renewal cannot operate while FYERS disables this API.
+The app reports this explicitly and preserves saved tokens. Use `authenticate.py`
+to sign in through your browser when needed. The support article's 15-day
+refresh-token validity does not guarantee the renewal endpoint is enabled.
+
+Set `FYERS_PIN` directly in your private `.env`, then run `authenticate.py` once
+to capture a refresh token (older versions saved only the access token). No daily
+browser login is needed only if FYERS re-enables the endpoint and accepts that refresh token. The running app
+checks the token's expiry on each refresh, renews within 60 seconds of expiry, and
+replaces the WebSocket connection with the renewed credentials. REST authentication
+errors (HTTP 401 or FYERS codes -8/-15/-16/-17) trigger one renewal and one retry.
+Concurrent renewal requests share a lock; failures wait 60 seconds before retrying.
+
+Tokens are replaced atomically in `.env`, preserving other settings. If access or
+refresh tokens were supplied as environment variables, successful renewal also
+updates those values in the running process. An external service manager's saved
+environment is not changed. Explicit `FyersDataProvider(access_token=...)` values
+remain caller-managed and do not trigger automatic renewal.
+
+FYERS states refresh tokens are valid for **15 days**. They cannot provide
+indefinite unattended login; sign in again when a refresh token expires, is
+revoked, or FYERS requires authentication. See
+[FYERS refresh-token validity](https://support.fyers.in/portal/en/kb/articles/what-is-the-function-of-the-refresh-token-in-fyers).
+Renewal failures keep existing tokens and show a configuration/sign-in error.
+The existing stale-data controls prevent signals while disconnected.
+
+To test renewal immediately after one-time setup:
+
+```powershell
+.\.venv\Scripts\python.exe authenticate.py --refresh
+```
+
+### Opt-in TOTP login
+
+TOTP login uses FYERS' internal login endpoints rather than the disabled refresh
+endpoint. These endpoints are not a supported public authentication API and may
+change or require browser interaction. Browser sign-in remains available with
+`authenticate.py`; the app never attempts to bypass CAPTCHA or approval screens.
+
+1. Enable **External 2FA TOTP** under FYERS **Profile → Others**, and link your
+   authenticator. Keep the Base32 setup secret private. See
+   [FYERS TOTP setup](https://support.fyers.in/portal/en/kb/articles/how-to-enable-or-disable-time-based-one-time-password-totp-in-fyers).
+2. Set these values directly in your private `.env`:
+
+   ```dotenv
+   FYERS_AUTH_MODE=totp
+   FYERS_USERNAME=your-account-login-id
+   FYERS_TOTP_SECRET=your-base32-setup-secret
+   FYERS_PIN=your-four-digit-pin
+   ```
+
+   Existing `FYERS_CLIENT_ID`, `FYERS_APP_SECRET` and the registered
+   `FYERS_REDIRECT_URI` are also required. The setup secret is not the current
+   six-digit authenticator code. Keep your system clock synchronized.
+3. Test a fresh login without a browser:
+
+   ```powershell
+   .\.venv\Scripts\python.exe authenticate.py --totp
+   ```
+
+The app reuses valid access tokens, performs TOTP login when missing or near
+expiry, retries rejected REST authentication once, saves tokens atomically, and
+replaces the live socket after rotation. No Windows scheduled task is required
+while the app is running; startup also checks the token. TOTP is generated
+locally with standard HMAC-SHA1 and a 30-second interval. Login validates random
+state and the registered redirect before exchanging the code.
+
+Transient connection failures back off for 60 seconds. Credential rejections
+stop further automatic attempts until authentication configuration changes or
+the app restarts, reducing repeated PIN attempts. Failures preserve existing
+tokens and never log PINs, setup secrets, OTPs or response bodies. To disable
+unattended login, set `FYERS_AUTH_MODE=browser`.
 
 Alternatively, in PowerShell, set these for the current terminal before starting Streamlit:
 
@@ -90,7 +175,10 @@ $env:FYERS_NIFTY_FUTURES_SYMBOL = "NSE:<active-contract>-FUT"
 python -m streamlit run streamlit_app.py
 ```
 
-FYERS access tokens expire according to the broker's authentication policy; generate a valid token using the FYERS authentication flow before running the dashboard. The dashboard reports FYERS errors instead of silently substituting sample prices. The sample and NSE data sources remain available for testing.
+FYERS access tokens expire according to the broker's authentication policy. The
+app renews them automatically when refresh credentials are configured; otherwise
+it requests sign-in. The dashboard reports FYERS errors instead of silently
+substituting sample prices. The sample and NSE sources remain available for testing.
 
 ### Live feed
 

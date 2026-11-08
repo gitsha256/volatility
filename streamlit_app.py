@@ -91,6 +91,8 @@ def main() -> None:
     with st.sidebar:
         st.subheader("Scanner inputs")
         data_source = st.selectbox("Market data", ["FYERS", "Sample market", "NSE API"])
+        if data_source == "FYERS":
+            refresh_live()
         try:
             snapshot = get_market_snapshot(data_source)
             live_expiry_days = chain_expiry_days(snapshot) if data_source == "FYERS" else None
@@ -98,8 +100,6 @@ def main() -> None:
             st.error(str(error))
             st.stop()
 
-        if data_source == "FYERS":
-            refresh_live()
         use_live_iv = st.checkbox("Use live chain IV", value=True) if data_source == "FYERS" else False
         with st.form("scanner_form"):
             futures_price = st.number_input(

@@ -14,6 +14,7 @@ from typing import Any
 from dotenv import dotenv_values
 from curl_cffi import requests as curl_requests, CurlHttpVersion
 from .pricing import invert_black76_iv
+from .auth import AuthError, ensure_access_token
 
 
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
@@ -199,6 +200,9 @@ class FyersDataProvider(MarketDataProvider):
         self.timeout = timeout
         self._http = None
         self.http_version = ""
+        self._managed_token = access_token is None
+        if self._managed_token and self.client_id:
+            self.refresh_access_token()
 
         if not self.client_id or not self.access_token:
             raise FyersDataError(
@@ -213,7 +217,13 @@ class FyersDataProvider(MarketDataProvider):
         if strike_count < 1:
             raise ValueError("strike_count must be at least 1.")
 
-    def _fetch_json(self, path: str, params: dict[str, str | int]) -> dict[str, Any]:
+    def refresh_access_token(self, *, force: bool = False) -> None:
+        try:
+            self.access_token = ensure_access_token(self.client_id, self.access_token, ENV_FILE, force=force)
+        except AuthError as error:
+            raise FyersDataError(str(error)) from None
+
+    def _fetch_json(self, path: str, params: dict[str, str | int], *, _retried: bool = False) -> dict[str, Any]:
         if self._http is None:
             self._http = curl_requests.Session(http_version=CurlHttpVersion.V3)
         request_options = dict(
@@ -236,6 +246,9 @@ class FyersDataProvider(MarketDataProvider):
             CurlHttpVersion.V3: "HTTP/3", CurlHttpVersion.V2_0: "HTTP/2",
             CurlHttpVersion.V1_1: "HTTP/1.1",
         }.get(response.http_version, "HTTP")
+        if response.status_code == 401 and self._managed_token and not _retried:
+            self.refresh_access_token(force=True)
+            return self._fetch_json(path, params, _retried=True)
         if response.status_code != 200:
             raise FyersDataError(f"FYERS data request failed with HTTP {response.status_code}.")
 
@@ -245,6 +258,9 @@ class FyersDataProvider(MarketDataProvider):
             raise FyersDataError("FYERS returned a non-JSON market-data response.") from error
         if not isinstance(payload, dict):
             raise FyersDataError("FYERS returned an unexpected market-data response.")
+        if payload.get("code") in (-8, -15, -16, -17) and self._managed_token and not _retried:
+            self.refresh_access_token(force=True)
+            return self._fetch_json(path, params, _retried=True)
         if payload.get("s") != "ok":
             message = payload.get("message") or payload.get("error") or "request rejected"
             raise FyersDataError(f"FYERS market-data error: {message}")
