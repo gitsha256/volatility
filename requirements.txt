@@ -4,3 +4,4 @@ curl_cffi>=0.14,<1
 fyers-apiv3==3.2.1
 openpyxl>=3.1,<4
 upstox-python-sdk==2.30.0
+jsonschema>=4.23,<5

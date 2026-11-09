@@ -1,0 +1,419 @@
+{
+  "source": "https://upstox.com/developer/api-documentation/llms.txt",
+  "reviewed": "2026-11-09",
+  "pages": [
+    "https://upstox.com/developer/api-documentation/access-token-request",
+    "https://upstox.com/developer/api-documentation/apply-ipo",
+    "https://upstox.com/developer/api-documentation/authorize",
+    "https://upstox.com/developer/api-documentation/cancel-gtt-order",
+    "https://upstox.com/developer/api-documentation/cancel-ipo-order",
+    "https://upstox.com/developer/api-documentation/cancel-multi-order",
+    "https://upstox.com/developer/api-documentation/v3/cancel-order",
+    "https://upstox.com/developer/api-documentation/cancel-order",
+    "https://upstox.com/developer/api-documentation/cancel-payout",
+    "https://upstox.com/developer/api-documentation/convert-positions",
+    "https://upstox.com/developer/api-documentation/exit-all-positions",
+    "https://upstox.com/developer/api-documentation/get-app-static-ips",
+    "https://upstox.com/developer/api-documentation/get-balance-sheet",
+    "https://upstox.com/developer/api-documentation/get-brokerage",
+    "https://upstox.com/developer/api-documentation/get-cash-flow",
+    "https://upstox.com/developer/api-documentation/get-change-oi",
+    "https://upstox.com/developer/api-documentation/get-company-profile",
+    "https://upstox.com/developer/api-documentation/get-competitors",
+    "https://upstox.com/developer/api-documentation/get-corporate-actions",
+    "https://upstox.com/developer/api-documentation/get-dii-data",
+    "https://upstox.com/developer/api-documentation/get-expired-future-contracts",
+    "https://upstox.com/developer/api-documentation/get-expired-historical-candle-data",
+    "https://upstox.com/developer/api-documentation/get-expired-option-contracts",
+    "https://upstox.com/developer/api-documentation/get-expiries",
+    "https://upstox.com/developer/api-documentation/get-fii-data",
+    "https://upstox.com/developer/api-documentation/get-full-market-quote-v3",
+    "https://upstox.com/developer/api-documentation/get-full-market-quote",
+    "https://upstox.com/developer/api-documentation/get-funds-and-margin-v3",
+    "https://upstox.com/developer/api-documentation/get-gtt-order-details",
+    "https://upstox.com/developer/api-documentation/v3/get-historical-candle-data",
+    "https://upstox.com/developer/api-documentation/get-historical-candle-data",
+    "https://upstox.com/developer/api-documentation/get-historical-trades",
+    "https://upstox.com/developer/api-documentation/get-holdings",
+    "https://upstox.com/developer/api-documentation/get-income-statement",
+    "https://upstox.com/developer/api-documentation/v3/get-intra-day-candle-data",
+    "https://upstox.com/developer/api-documentation/get-intra-day-candle-data",
+    "https://upstox.com/developer/api-documentation/get-ipo-details",
+    "https://upstox.com/developer/api-documentation/get-ipo-order-details",
+    "https://upstox.com/developer/api-documentation/get-ipo-orders",
+    "https://upstox.com/developer/api-documentation/get-ipos",
+    "https://upstox.com/developer/api-documentation/get-key-ratios",
+    "https://upstox.com/developer/api-documentation/get-kill-switch",
+    "https://upstox.com/developer/api-documentation/get-market-data-feed-authorize-v3",
+    "https://upstox.com/developer/api-documentation/get-market-data-feed-authorize",
+    "https://upstox.com/developer/api-documentation/v3/get-market-data-feed",
+    "https://upstox.com/developer/api-documentation/get-market-data-feed",
+    "https://upstox.com/developer/api-documentation/get-market-holidays",
+    "https://upstox.com/developer/api-documentation/get-market-quote-ohlc-v3",
+    "https://upstox.com/developer/api-documentation/get-market-quote-ohlc",
+    "https://upstox.com/developer/api-documentation/get-market-status",
+    "https://upstox.com/developer/api-documentation/get-market-timings",
+    "https://upstox.com/developer/api-documentation/get-max-pain",
+    "https://upstox.com/developer/api-documentation/get-mtf-positions",
+    "https://upstox.com/developer/api-documentation/get-mutual-fund-holdings",
+    "https://upstox.com/developer/api-documentation/get-mutual-fund-order-by-id",
+    "https://upstox.com/developer/api-documentation/get-mutual-fund-orders",
+    "https://upstox.com/developer/api-documentation/get-mutual-fund-sips",
+    "https://upstox.com/developer/api-documentation/get-news",
+    "https://upstox.com/developer/api-documentation/get-oi",
+    "https://upstox.com/developer/api-documentation/get-option-contracts",
+    "https://upstox.com/developer/api-documentation/get-order-book",
+    "https://upstox.com/developer/api-documentation/get-order-details",
+    "https://upstox.com/developer/api-documentation/get-order-history",
+    "https://upstox.com/developer/api-documentation/get-payout-modes",
+    "https://upstox.com/developer/api-documentation/get-pc-option-chain",
+    "https://upstox.com/developer/api-documentation/get-pcr",
+    "https://upstox.com/developer/api-documentation/get-portfolio-stream-feed-authorize",
+    "https://upstox.com/developer/api-documentation/get-portfolio-stream-feed",
+    "https://upstox.com/developer/api-documentation/get-positions",
+    "https://upstox.com/developer/api-documentation/get-profile",
+    "https://upstox.com/developer/api-documentation/get-profit-and-loss-report",
+    "https://upstox.com/developer/api-documentation/get-report-meta-data",
+    "https://upstox.com/developer/api-documentation/get-share-holdings",
+    "https://upstox.com/developer/api-documentation/get-futures-smartlist",
+    "https://upstox.com/developer/api-documentation/get-mtf-smartlist",
+    "https://upstox.com/developer/api-documentation/get-options-smartlist",
+    "https://upstox.com/developer/api-documentation/get-trade-charges",
+    "https://upstox.com/developer/api-documentation/get-trade-history",
+    "https://upstox.com/developer/api-documentation/get-trades-by-order",
+    "https://upstox.com/developer/api-documentation/get-user-fund-margin",
+    "https://upstox.com/developer/api-documentation/get-user-payins",
+    "https://upstox.com/developer/api-documentation/get-user-payouts",
+    "https://upstox.com/developer/api-documentation/instrument-search",
+    "https://upstox.com/developer/api-documentation/logout",
+    "https://upstox.com/developer/api-documentation/ltp-v3",
+    "https://upstox.com/developer/api-documentation/ltp",
+    "https://upstox.com/developer/api-documentation/margin",
+    "https://upstox.com/developer/api-documentation/modify-gtt-order",
+    "https://upstox.com/developer/api-documentation/v3/modify-order",
+    "https://upstox.com/developer/api-documentation/modify-order",
+    "https://upstox.com/developer/api-documentation/modify-payout",
+    "https://upstox.com/developer/api-documentation/option-greek",
+    "https://upstox.com/developer/api-documentation/payout-request",
+    "https://upstox.com/developer/api-documentation/place-gtt-order",
+    "https://upstox.com/developer/api-documentation/place-multi-order",
+    "https://upstox.com/developer/api-documentation/v3/place-order",
+    "https://upstox.com/developer/api-documentation/place-order",
+    "https://upstox.com/developer/api-documentation/get-token",
+    "https://upstox.com/developer/api-documentation/update-app-static-ips",
+    "https://upstox.com/developer/api-documentation/update-kill-switch"
+  ],
+  "coverage": {
+    "https://upstox.com/developer/api-documentation/access-token-request": [
+      "initTokenRequestForIndieUser"
+    ],
+    "https://upstox.com/developer/api-documentation/apply-ipo": [
+      "applyForIpo"
+    ],
+    "https://upstox.com/developer/api-documentation/authorize": [
+      "authorize"
+    ],
+    "https://upstox.com/developer/api-documentation/cancel-gtt-order": [
+      "cancelGTTOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/cancel-ipo-order": [
+      "cancelIpoOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/cancel-multi-order": [
+      "cancelMultiOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/v3/cancel-order": [
+      "cancelOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/cancel-order": [
+      "cancelOrder_1"
+    ],
+    "https://upstox.com/developer/api-documentation/cancel-payout": [
+      "cancelPayout"
+    ],
+    "https://upstox.com/developer/api-documentation/convert-positions": [
+      "convertPositions"
+    ],
+    "https://upstox.com/developer/api-documentation/exit-all-positions": [
+      "exitPositions"
+    ],
+    "https://upstox.com/developer/api-documentation/get-app-static-ips": [
+      "getUserIps"
+    ],
+    "https://upstox.com/developer/api-documentation/get-balance-sheet": [
+      "getBalanceSheet"
+    ],
+    "https://upstox.com/developer/api-documentation/get-brokerage": [
+      "getBrokerage"
+    ],
+    "https://upstox.com/developer/api-documentation/get-cash-flow": [
+      "getCashFlow"
+    ],
+    "https://upstox.com/developer/api-documentation/get-change-oi": [
+      "getChangeOiData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-company-profile": [
+      "getCompanyProfile"
+    ],
+    "https://upstox.com/developer/api-documentation/get-competitors": [
+      "getCompetitors"
+    ],
+    "https://upstox.com/developer/api-documentation/get-corporate-actions": [
+      "getCorporateActions"
+    ],
+    "https://upstox.com/developer/api-documentation/get-dii-data": [
+      "getDiiData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-expired-future-contracts": [
+      "getExpiredFutureContracts"
+    ],
+    "https://upstox.com/developer/api-documentation/get-expired-historical-candle-data": [
+      "getExpiredHistoricalCandleData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-expired-option-contracts": [
+      "getExpiredOptionContracts"
+    ],
+    "https://upstox.com/developer/api-documentation/get-expiries": [
+      "getExpiriesResponse"
+    ],
+    "https://upstox.com/developer/api-documentation/get-fii-data": [
+      "getFiiData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-full-market-quote-v3": [
+      "getFullMarketQuoteV3"
+    ],
+    "https://upstox.com/developer/api-documentation/get-full-market-quote": [
+      "getFullMarketQuote"
+    ],
+    "https://upstox.com/developer/api-documentation/get-funds-and-margin-v3": [
+      "getUserFundMarginV3"
+    ],
+    "https://upstox.com/developer/api-documentation/get-gtt-order-details": [
+      "getGttOrderDetails"
+    ],
+    "https://upstox.com/developer/api-documentation/v3/get-historical-candle-data": [
+      "getHistoricalCandleData",
+      "getHistoricalCandleData_1"
+    ],
+    "https://upstox.com/developer/api-documentation/get-historical-candle-data": [
+      "getHistoricalCandleData_2",
+      "getHistoricalCandleData_3"
+    ],
+    "https://upstox.com/developer/api-documentation/get-historical-trades": [
+      "getTradeHistory"
+    ],
+    "https://upstox.com/developer/api-documentation/get-holdings": [
+      "getHoldings"
+    ],
+    "https://upstox.com/developer/api-documentation/get-income-statement": [
+      "getIncomeStatement"
+    ],
+    "https://upstox.com/developer/api-documentation/v3/get-intra-day-candle-data": [
+      "getIntraDayCandleData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-intra-day-candle-data": [
+      "getIntraDayCandleData_1"
+    ],
+    "https://upstox.com/developer/api-documentation/get-ipo-details": [
+      "getIpoDetails"
+    ],
+    "https://upstox.com/developer/api-documentation/get-ipo-order-details": [
+      "getIpoOrderById"
+    ],
+    "https://upstox.com/developer/api-documentation/get-ipo-orders": [
+      "getIpoOrders"
+    ],
+    "https://upstox.com/developer/api-documentation/get-ipos": [
+      "getIpoListing"
+    ],
+    "https://upstox.com/developer/api-documentation/get-key-ratios": [
+      "getKeyRatios"
+    ],
+    "https://upstox.com/developer/api-documentation/get-kill-switch": [
+      "getKillSwitch"
+    ],
+    "https://upstox.com/developer/api-documentation/get-market-data-feed-authorize-v3": [
+      "getMarketDataFeedAuthorizeV3"
+    ],
+    "https://upstox.com/developer/api-documentation/get-market-data-feed-authorize": [
+      "getMarketDataFeedAuthorize"
+    ],
+    "https://upstox.com/developer/api-documentation/v3/get-market-data-feed": [
+      "getMarketDataFeedV3"
+    ],
+    "https://upstox.com/developer/api-documentation/get-market-data-feed": [
+      "getMarketDataFeed"
+    ],
+    "https://upstox.com/developer/api-documentation/get-market-holidays": [
+      "getHolidays",
+      "getHoliday"
+    ],
+    "https://upstox.com/developer/api-documentation/get-market-quote-ohlc-v3": [
+      "getMarketQuoteOHLCV3"
+    ],
+    "https://upstox.com/developer/api-documentation/get-market-quote-ohlc": [
+      "getMarketQuoteOHLC"
+    ],
+    "https://upstox.com/developer/api-documentation/get-market-status": [
+      "getMarketStatus"
+    ],
+    "https://upstox.com/developer/api-documentation/get-market-timings": [
+      "getExchangeTimings"
+    ],
+    "https://upstox.com/developer/api-documentation/get-max-pain": [
+      "getMaxPainData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-mtf-positions": [
+      "getMtfPositions"
+    ],
+    "https://upstox.com/developer/api-documentation/get-mutual-fund-holdings": [
+      "getMutualFundHoldings"
+    ],
+    "https://upstox.com/developer/api-documentation/get-mutual-fund-order-by-id": [
+      "getMutualFundOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/get-mutual-fund-orders": [
+      "getMutualFundOrders"
+    ],
+    "https://upstox.com/developer/api-documentation/get-mutual-fund-sips": [
+      "getMutualFundSips"
+    ],
+    "https://upstox.com/developer/api-documentation/get-news": [
+      "getNews"
+    ],
+    "https://upstox.com/developer/api-documentation/get-oi": [
+      "getOiData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-option-contracts": [
+      "getOptionContracts"
+    ],
+    "https://upstox.com/developer/api-documentation/get-order-book": [
+      "getOrderBook"
+    ],
+    "https://upstox.com/developer/api-documentation/get-order-details": [
+      "getOrderStatus"
+    ],
+    "https://upstox.com/developer/api-documentation/get-order-history": [
+      "getOrderDetails"
+    ],
+    "https://upstox.com/developer/api-documentation/get-payout-modes": [
+      "getPayoutModes"
+    ],
+    "https://upstox.com/developer/api-documentation/get-pc-option-chain": [
+      "getPutCallOptionChain"
+    ],
+    "https://upstox.com/developer/api-documentation/get-pcr": [
+      "getPcrData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-portfolio-stream-feed-authorize": [
+      "getPortfolioStreamFeedAuthorize"
+    ],
+    "https://upstox.com/developer/api-documentation/get-portfolio-stream-feed": [
+      "getPortfolioStreamFeed"
+    ],
+    "https://upstox.com/developer/api-documentation/get-positions": [
+      "getPositions"
+    ],
+    "https://upstox.com/developer/api-documentation/get-profile": [
+      "getProfile"
+    ],
+    "https://upstox.com/developer/api-documentation/get-profit-and-loss-report": [
+      "getTradeWiseProfitAndLossData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-report-meta-data": [
+      "getTradeWiseProfitAndLossMetaData"
+    ],
+    "https://upstox.com/developer/api-documentation/get-share-holdings": [
+      "getShareHoldings"
+    ],
+    "https://upstox.com/developer/api-documentation/get-futures-smartlist": [
+      "getSmartlistFutures"
+    ],
+    "https://upstox.com/developer/api-documentation/get-mtf-smartlist": [
+      "getSmartlistMtf"
+    ],
+    "https://upstox.com/developer/api-documentation/get-options-smartlist": [
+      "getSmartlistOptions"
+    ],
+    "https://upstox.com/developer/api-documentation/get-trade-charges": [
+      "getProfitAndLossCharges"
+    ],
+    "https://upstox.com/developer/api-documentation/get-trade-history": [
+      "getTradesByDateRange"
+    ],
+    "https://upstox.com/developer/api-documentation/get-trades-by-order": [
+      "getTradesByOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/get-user-fund-margin": [
+      "getUserFundMargin"
+    ],
+    "https://upstox.com/developer/api-documentation/get-user-payins": [
+      "getPayinHistory"
+    ],
+    "https://upstox.com/developer/api-documentation/get-user-payouts": [
+      "getPayoutHistory"
+    ],
+    "https://upstox.com/developer/api-documentation/instrument-search": [
+      "searchInstrument"
+    ],
+    "https://upstox.com/developer/api-documentation/logout": [
+      "logout"
+    ],
+    "https://upstox.com/developer/api-documentation/ltp-v3": [
+      "getLtp"
+    ],
+    "https://upstox.com/developer/api-documentation/ltp": [
+      "ltp"
+    ],
+    "https://upstox.com/developer/api-documentation/margin": [
+      "postMargin"
+    ],
+    "https://upstox.com/developer/api-documentation/modify-gtt-order": [
+      "modifyGTTOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/v3/modify-order": [
+      "modifyOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/modify-order": [
+      "modifyOrder_1"
+    ],
+    "https://upstox.com/developer/api-documentation/modify-payout": [
+      "modifyPayout"
+    ],
+    "https://upstox.com/developer/api-documentation/option-greek": [
+      "getMarketQuoteOptionGreek"
+    ],
+    "https://upstox.com/developer/api-documentation/payout-request": [
+      "initiatePayout"
+    ],
+    "https://upstox.com/developer/api-documentation/place-gtt-order": [
+      "placeGTTOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/place-multi-order": [
+      "placeMultiOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/v3/place-order": [
+      "placeOrder"
+    ],
+    "https://upstox.com/developer/api-documentation/place-order": [
+      "placeOrder_1"
+    ],
+    "https://upstox.com/developer/api-documentation/get-token": [
+      "token",
+      "generateTokenViaTotpAndPin"
+    ],
+    "https://upstox.com/developer/api-documentation/update-app-static-ips": [
+      "updateUserIp"
+    ],
+    "https://upstox.com/developer/api-documentation/update-kill-switch": [
+      "updateKillSwitch"
+    ]
+  },
+  "discontinued_operations": [
+    "getMarketDataFeed",
+    "getMarketDataFeedAuthorize"
+  ],
+  "extra_openapi_operations": [
+    "publishEvent"
+  ]
+}

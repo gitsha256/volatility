@@ -225,11 +225,11 @@ heuristics, not calibrated trading forecasts.
 ## Modules
 
 - `volatility_scanner/config.py` — scanner defaults and configuration
-- `volatility_scanner/pricing.py` — Black-76 pricing, IV inversion and Greeks
-- `volatility_scanner/volatility.py` — RV and forecast engine
-- `volatility_scanner/data.py` — sample, NSE and FYERS market-data providers
-- `volatility_scanner/strategy.py` — opportunity scoring and scanner logic
-- `volatility_scanner/storage.py` — SQLite persistence utilities
+- `volatility_scanner/analytics/pricing.py` — Black-76 pricing, IV inversion and Greeks
+- `volatility_scanner/analytics/volatility.py` — RV and forecast engine
+- `volatility_scanner/market/data.py` — sample, NSE and FYERS market-data providers
+- `volatility_scanner/strategies/scanner.py` — opportunity scoring and scanner logic
+- `volatility_scanner/storage/opportunities.py` — SQLite persistence utilities
 - `main.py` — CLI entry point
 
 ## Design alignment
@@ -469,3 +469,207 @@ This is NIFTY market-data capture. Portfolio/order execution, stock fundamentals
 stock news and unrelated market universes are outside this capture profile.
 Optional Plus endpoints have offline implementation tests; availability and D30
 subscription acceptance still require a future user-requested live verification.
+
+
+## Source layout and complete Upstox APIs
+
+Code and tests are grouped by content and usage. Root Python files remain thin
+command entry points; existing launch commands are unchanged.
+
+```text
+volatility_scanner/
+  config.py                 shared configuration and repository .env path
+  analytics/                pricing, Greeks, volatility models
+  strategies/               scanner and opportunity scoring
+  market/                   market-data providers and existing live cache
+  security/                 shared token storage, expiry hints and RFC 6238 TOTP
+  storage/                  journal, Excel export, opportunities, process lock
+  brokers/
+    fyers/                  FYERS authentication and login
+    upstox/
+      auth.py               Market/Algo TOTP token renewal
+      api/                  credentials, catalogue, sync/async clients, rate budgets
+      market/               NIFTY universe, subscription coverage and analytics
+      streams/              market Protobuf and portfolio JSON WebSockets
+      specs/                official OpenAPI snapshot and documentation coverage
+  apps/                     dashboard, CLIs, capture, replay, benchmarks, sandbox tests
+tests/
+  analytics/                model and strategy tests
+  brokers/fyers/            FYERS authentication tests
+  brokers/upstox/           Upstox auth, API, stream and coverage tests
+  market/                   provider/live-feed tests
+  storage/                  durability, exports, replay and failure tests
+  apps/                     dashboard tests
+```
+
+Full endpoint inventory: [Upstox API reference](docs/upstox-api.md).
+The bundled catalogue has 105 entries covering the official OpenAPI contract and
+100 documented API reference pages, including the V3 feed routes absent from
+Swagger. V2 market feeds are discontinued and explicitly rejected locally.
+`publishEvent` is present in the published contract without a public reference page.
+Not every operation is available in sandbox: only the seven flagged order routes
+are accepted there. No sandbox request falls back to a live host.
+
+Inspect supported operations without credentials or network requests:
+
+```powershell
+.venv/Scripts/python.exe upstox_api.py --list
+.venv/Scripts/python.exe upstox_api.py --list trading
+.venv/Scripts/python.exe upstox_api.py --describe placeOrder
+```
+
+Synchronous client (one persistent HTTP/2-capable session):
+
+```python
+from volatility_scanner.brokers.upstox.api.client import APIClient
+
+with APIClient("market") as api:
+    contracts = api.market.getOptionContracts(
+        query={"instrument_key": "NSE_INDEX|Nifty 50"}
+    )
+```
+
+Every operation also supports `api.call("operationId", path={}, query={},
+headers={}, body=...)`. The names/sections come from the bundled contract and
+`--describe`. Optional bodies must be omitted rather than supplied as `None`.
+Requests are validated against cached JSON Schema validators before sending.
+The returned value is the complete decoded response dictionary; no response
+fields are discarded by model conversion.
+
+Async client (persistent libcurl async session, up to eight concurrent transfers):
+
+```python
+from volatility_scanner.brokers.upstox.api.client import AsyncAPIClient
+
+async with AsyncAPIClient("market") as api:
+    result = await api.market.getOptionContracts(
+        query={"instrument_key": "NSE_INDEX|Nifty 50"}
+    )
+```
+
+`call_many([(operation_id, request_sections), ...], concurrency=4)` is available
+on both clients. It returns results or exception objects in input order, preserving
+partial successes. Clients share per-process sliding-window budgets by environment. Standard limits
+are scoped per endpoint; order writes share the documented combined allowance.
+Payout, payment-read, IPO and TOTP limits have separate budgets. Account activity in
+other applications can consume the same broker allowance. `MarketREST` remains a
+separate conservative discovery/analytics transport for the live recorder.
+
+Profiles read separate `.env` entries:
+
+- `market`: `UPSTOX_ACCESS_TOKEN`, `UPSTOX_API_KEY`, optional `UPSTOX_API_SECRET`.
+- `algo`: `UPSTOX_ALGO_ACCESS_TOKEN`, `UPSTOX_ALGO_API_KEY`, `UPSTOX_ALGO_API_SECRET`.
+- `sandbox`: `UPSTOX_SANDBOX_ACCESS_TOKEN`, `UPSTOX_SANDBOX_API_KEY`, `UPSTOX_SANDBOX_API_SECRET`.
+
+API secrets are used only for browser OAuth code exchange, not market requests.
+The existing `UUPSTOX_APP_SECRET` spelling is accepted as a legacy Market-profile
+alias; prefer `UPSTOX_API_SECRET` in new configuration. Sandbox tokens are generated
+in Developer Apps and do not support TOTP login.
+
+```powershell
+.venv/Scripts/python.exe authenticate_upstox.py --profile market
+.venv/Scripts/python.exe authenticate_upstox.py --profile algo
+```
+
+Algo login can use `UPSTOX_ALGO_PIN`/`UPSTOX_ALGO_TOTP_SECRET`, falling back to the
+shared account `UPSTOX_PIN`/`UPSTOX_TOTP_SECRET`. If Market and Algo have the same
+non-empty API key, token renewal updates both token entries atomically because
+Upstox revokes the old token for that app. Distinct API keys are never synchronized;
+Sandbox is never synchronized with live profiles. Existing client instances must
+be recreated after an external token renewal.
+
+Live mutations are disabled by default. Calling one requires an explicit
+`allow_live_mutation=True` argument or constructing the client with
+`allow_live_mutations=True`. This exposes the API without executing a trade merely
+because keys were added. The CLI has a matching `--allow-live-mutations` flag.
+Order writes route to the documented HFT host; sandbox writes always route to
+`api-sandbox.upstox.com`. No automatic retry is made after an ambiguous order
+submission. `APIError.outcome_unknown` marks uncertain mutation outcomes; reconcile
+orders before deciding to retry. No live order, payout, IPO, position conversion,
+static-IP update or kill-switch mutation was performed during implementation.
+
+Market and account WebSockets:
+
+```python
+from volatility_scanner.brokers.upstox.api.client import APIClient
+
+with APIClient("market") as api:
+    with api.market_stream(
+        instrument_keys=["NSE_INDEX|Nifty 50"], mode="full", on_message=handle_market
+    ):
+        wait_for_stop()
+
+with APIClient("algo") as api:
+    with api.portfolio_stream(
+        update_types=("order", "gtt_order", "position", "holding"),
+        on_message=handle_portfolio,
+    ):
+        wait_for_stop()
+```
+
+`handle_market`, `handle_portfolio` and `wait_for_stop` are application callbacks.
+Market streams support `ltpc`, `option_greeks`, `full`, and `full_d30`, with
+subscription capacity validation. Portfolio updates decode in a worker thread,
+re-authorize on reconnect, and validate signed socket hosts. Both verify TLS and
+use TCP_NODELAY. Sandbox has no documented market/portfolio stream and is rejected.
+Broker subscription limits apply across the account; local validation cannot see
+connections opened by other programs. V2 market streaming is discontinued.
+
+Run explicit sandbox-only mutation verification:
+
+```powershell
+.venv/Scripts/python.exe verify_upstox_sandbox.py
+```
+
+This tests V2/V3 place, modify and cancel, plus multi-order placement and cleanup
+cancellations. It cannot accept a live profile. Latest implementation verification
+successfully exercised all seven sandbox routes, a live read-only Algo profile
+request, and the Market/Portfolio WebSocket handshakes. No account-event mutation
+was generated to force holdings/position notifications; event handling is tested
+with fixtures. Sandbox success does not verify exchange execution or live static-IP
+permissions. Other endpoints are schema/routing tested, not all live-executed.
+
+Offline performance checks:
+
+```powershell
+.venv/Scripts/python.exe benchmark_upstox_api.py --iterations 10000
+.venv/Scripts/python.exe benchmark_capture.py --frames 100000
+.venv/Scripts/python.exe -m unittest discover -s tests
+```
+
+API preparation benchmarks exclude Python import time, networking, rate-limit
+waits and broker latency. Cached catalogue/validators avoid parsing the contract
+per request; async I/O and bounded pools avoid per-call client/thread-pool creation.
+Secrets are hidden from credential representations, error messages and CLI output.
+
+
+For browser OAuth, `authorization_url()` creates and stores a random state by
+default. `exchange_redirect(callback_url)` checks the registered callback target,
+state and single-use code before exchange. `exchange_code(code)` is also exposed
+for applications that perform their own callback validation. Authentication never
+requires printing credentials. The catalogue corrects two published-contract gaps:
+Bearer auth on history/calendar APIs, and the required OAuth `response_type=code`.
+
+When running an installed package outside the repository, set
+`VOLATILITY_ENV_FILE` to the absolute path of your private `.env`. Repository
+commands default to the repository `.env`. The built wheel includes the endpoint
+schemas and documentation inventory; it contains no credentials or recordings.
+# Reliability verification
+
+Read-only live reconnect/token-renewal check (renews the configured market token,
+updates same-app aliases, opens one NIFTY subscription, then disconnects):
+
+```powershell
+.venv/Scripts/python.exe -m volatility_scanner.apps.verify_upstox_reliability --output D:/market-data/volatility/reliability
+.venv/Scripts/python.exe -m unittest tests.brokers.upstox.test_reliability -v
+.venv/Scripts/python.exe benchmark_capture.py --frames 1000000
+```
+
+The recorder checks token expiry every 30 seconds and reconnects when its token
+changes. Renewal failures retry after 30 seconds. Storage stress verifies exact
+raw/decoded counts, drained queues, SQLite integrity, and database/WAL size.
+Rollover tests simulate changing contract sets while retaining prior events.
+These bounded checks do not establish overnight stability, real expiry-day
+behavior, or completeness during a broker/network outage. Market streams cannot
+replay ticks missed while disconnected. Excel export and retention over multiple
+days still require a longer market-hours soak.

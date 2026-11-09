@@ -9,7 +9,10 @@ description = "NIFTY intraday options volatility scanner and decision support en
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 authors = [{ name = "Copilot" }]
-dependencies = ["python-dotenv>=1.0,<2", "curl_cffi>=0.14,<1", "fyers-apiv3==3.2.1", "openpyxl>=3.1,<4", "upstox-python-sdk==2.30.0"]
+dependencies = ["python-dotenv>=1.0,<2", "curl_cffi>=0.14,<1", "fyers-apiv3==3.2.1", "openpyxl>=3.1,<4", "upstox-python-sdk==2.30.0", "jsonschema>=4.23,<5"]
 
-[tool.setuptools]
-packages = ["volatility_scanner"]
+[tool.setuptools.packages.find]
+include = ["volatility_scanner*"]
+
+[tool.setuptools.package-data]
+"volatility_scanner.brokers.upstox" = ["specs/*.json"]

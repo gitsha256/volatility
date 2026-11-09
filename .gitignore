@@ -11,3 +11,6 @@ scanner.db
 .streamlit/secrets.toml
 .idea/
 recordings/
+build/
+dist/
+*.egg-info/

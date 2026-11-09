@@ -1,14 +1,4 @@
-"""Generate and save an Upstox access token using configured TOTP credentials."""
-from volatility_scanner.auth import AuthError
-from volatility_scanner.upstox_auth import ensure_upstox_token
-
-if __name__ == '__main__':
-    try:
-        ensure_upstox_token(force=True)
-        print('Upstox TOTP login succeeded. Access token saved to .env.')
-    except AuthError as error:
-        print(error)
-        raise SystemExit(1)
-    except KeyboardInterrupt:
-        print('Authentication cancelled.')
-        raise SystemExit(1)
+"""Command entry point; implementation lives in volatility_scanner.apps."""
+if __name__ == "__main__":
+    from runpy import run_module
+    run_module("volatility_scanner.apps.authenticate_upstox", run_name="__main__")

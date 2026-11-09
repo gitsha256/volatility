@@ -1,3 +1,8 @@
+from pathlib import Path
+import os
+
+ENV_FILE = Path(os.getenv('VOLATILITY_ENV_FILE', Path(__file__).resolve().parents[1] / '.env')).expanduser().resolve()
+
 from dataclasses import dataclass
 
 
