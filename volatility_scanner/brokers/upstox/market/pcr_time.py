@@ -83,7 +83,9 @@ class StreamingAnalytics:
             if self.exposure:
                 status = dict(sample_epoch=timestamp, expiry=expiry, complete=False,
                               contracts_expected=expected, contracts_with_oi_iv=len(options),
-                              reason='expired' if timestamp >= end else 'incomplete_or_stale')
+                              reason=('expired' if timestamp >= end else
+                                      'missing_or_invalid_iv' if complete and len(options) != expected else
+                                      'incomplete_or_stale'))
                 if complete and len(options) == expected and timestamp < end:
                     try:
                         profile = exposure_profile(options, spot=spot, years=(end - timestamp) / YEAR_SECONDS,

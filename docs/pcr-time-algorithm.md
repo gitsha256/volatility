@@ -6,6 +6,61 @@ are hypotheses; they are not established by these calculations or tests.
 
 ## Running
 
+For a dedicated algorithm feed with minimal payload and no per-tick disk writes:
+
+```powershell
+python stream_option_chain.py --expiry-scope front_two
+```
+
+This launches the existing lifecycle with `option_greeks` for the options and
+`full` for NIFTY spot. It streams all selected strikes, not just ATM, and computes
+the configured analytics once per minute. Output defaults to
+`D:/market-data/volatility/algorithm-stream`; `--output`, `--stop`, expiry scope,
+IV units and OI multiplier flags work as on the recorder.
+
+The decoder reads Protobuf fields directly without whole-message JSON/dict
+conversion, Greek/depth flattening or any REST polling for OI/IV. A 64-frame
+decoder queue applies backpressure when full. Frames over 8 MiB produce a surfaced
+failure; these limits bound queued payload memory to at most 512 MiB plus frames
+being handled and normal runtime/cache overhead. Normal payloads are much smaller.
+There is one shared socket and decoder, not one connection/thread per strike.
+
+The single-producer handoff uses a dictionary keyed by subscribed instrument,
+so pending state is bounded by the subscription size. Repeated pending updates
+coalesce to the latest state, scheduling one event-loop callback per batch.
+Only spot, OI, IV and option LTP are copied into the algorithm cache; unchanged
+OI is not made fresh by LTPC-only messages. Ages use original socket receipt
+timestamps, not delayed dispatch time. Reconnect clears freshness and pending
+state; frames received before the new connection cutoff are ignored. Contract
+refresh prunes removed instruments. Cache failures surface to the supervisor.
+
+The dedicated feed persists minute results and contract metadata, **not every
+intermediate tick**. Health exposes coalesced update count, pending instrument
+count, handoffs and latest receive-to-cache delay. For full raw/tick retention,
+use the original recorder command below; it keeps the normal detailed decoder.
+Both modes reuse token renewal, resubscription, discovery, disk reserve checks,
+graceful drain, batched SQLite writes and Excel export. REST is still needed for
+initial contract discovery and periodic expiry/subscription refresh, not for
+streamed algorithm inputs. No mode can replay broker ticks lost during outages.
+
+Synthetic decoder/cache benchmark:
+
+```powershell
+python -m volatility_scanner.apps.benchmark_option_chain --frames 100000
+```
+
+This checks final state and frame counts without network/disk or algorithm
+computation; its throughput is not broker latency or an end-to-end capture rate.
+
+Bounded read-only broker smoke verification (disconnects after the initial
+snapshots, stores a count/quality report under `D:/market-data/volatility/verification`):
+
+```powershell
+python -m volatility_scanner.apps.verify_option_chain_feed
+```
+
+Full recording plus minute algorithms:
+
 ```powershell
 python record_upstox.py --expiry-scope front_two --feed-mode full --analytics pcr-time,exposure --exposure-iv-unit percent --exposure-oi-multiplier 1
 ```

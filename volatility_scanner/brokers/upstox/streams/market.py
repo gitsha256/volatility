@@ -32,11 +32,17 @@ class VerifiedFeeder(MarketDataFeederV3):
 
 
 class VerifiedStreamer(MarketDataStreamerV3):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, protobuf_callback=None, max_decode_queue=0, max_frame_bytes=0, **kwargs):
+        if type(max_decode_queue) is not int or max_decode_queue < 0:
+            raise ValueError('Decoder queue capacity must be a nonnegative integer')
+        if type(max_frame_bytes) is not int or max_frame_bytes < 0:
+            raise ValueError('Frame byte limit must be a nonnegative integer')
         super().__init__(*args, **kwargs)
+        self.protobuf_callback = protobuf_callback
+        self.max_frame_bytes = max_frame_bytes
         self.raw_callback = None
         self.accepting_frames = True
-        self.decode_queue = queue.Queue()
+        self.decode_queue = queue.Queue(maxsize=max_decode_queue)
         self.decoder_failure = None
         self.frames_received = 0
         self.bytes_received = 0
@@ -47,13 +53,17 @@ class VerifiedStreamer(MarketDataStreamerV3):
     def handle_message(self, ws, message):
         if not self.accepting_frames:
             return
+        if self.max_frame_bytes and len(message) > self.max_frame_bytes:
+            self.decoder_failure = RuntimeError('Market frame exceeds configured byte limit')
+            return
         received = datetime.now(IST).isoformat(timespec='microseconds')
         stamp = time.perf_counter_ns()
         if self.raw_callback:
             self.raw_callback(message, received)
         self.frames_received += 1
         self.bytes_received += len(message)
-        self.decode_queue.put_nowait((message, received, stamp))
+        # Bounded users apply transport backpressure; never discard frames silently.
+        self.decode_queue.put((message, received, stamp))
 
     def _decode_loop(self):
         while True:
@@ -62,7 +72,12 @@ class VerifiedStreamer(MarketDataStreamerV3):
                 if item is None:
                     return
                 message, received, stamp = item
-                data = json_format.MessageToDict(self.decode_protobuf(message),
+                frame = self.decode_protobuf(message)
+                if self.protobuf_callback is not None:
+                    self.protobuf_callback(frame, received, stamp)
+                    self.decode_ms = (time.perf_counter_ns() - stamp) / 1e6
+                    continue
+                data = json_format.MessageToDict(frame,
                                                 always_print_fields_with_no_presence=True)
                 data['_received_at_ist'] = received
                 data['_receive_perf_ns'] = stamp

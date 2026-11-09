@@ -18,6 +18,7 @@ from volatility_scanner.security.tokens import AuthError
 from volatility_scanner.storage.journal import Recorder, INDEX, IST
 from volatility_scanner.brokers.upstox.auth import ensure_upstox_token
 from volatility_scanner.brokers.upstox.streams.market import VerifiedStreamer
+from volatility_scanner.brokers.upstox.streams.option_chain import OptionChainFeed
 from volatility_scanner.storage.excel import export_directory
 from volatility_scanner.storage.lifecycle import capture_guard
 from volatility_scanner.brokers.upstox.api.market_rest import MarketREST
@@ -48,6 +49,7 @@ class UpstoxRecorder(Recorder):
         self.contracts = {}
         self.modes = {}
         self.record_ticks = True
+        self.algorithm_feed = None
 
     def enqueue(self, bucket, source, payload):
         if source != 'websocket' or self.record_ticks:
@@ -60,6 +62,8 @@ class UpstoxRecorder(Recorder):
             self.latest.pop(key, None)
             self.received.pop(key, None)
         self.contracts = {row['symbol']: row for row in contracts}
+        if self.algorithm_feed is not None:
+            self.algorithm_feed.configure(self.contracts)
         for row in contracts:
             self.register(row, expiry_epoch(row['expiry_date']))
         self.context = ({'NSE_INDEX|India VIX': 'INDIA_VIX'}
@@ -124,7 +128,8 @@ class UpstoxRecorder(Recorder):
 async def run(args):
     token = await asyncio.to_thread(ensure_upstox_token)
     recorder = UpstoxRecorder(args.output)
-    recorder.record_ticks = not getattr(args, 'no_ticks', False)
+    algorithm_only = getattr(args, 'algorithm_stream', False)
+    recorder.record_ticks = not algorithm_only and not getattr(args, 'no_ticks', False)
     rest = MarketREST(token)
     streamer = None
     samplers = []
@@ -155,18 +160,30 @@ async def run(args):
         config = upstox_client.Configuration()
         config.access_token = token
         # The pinned feed implementation only reads configuration; avoid its unused REST thread pool.
-        streamer = VerifiedStreamer(SimpleNamespace(configuration=config))
-        if not getattr(args, 'no_raw_frames', False):
+        if algorithm_only:
+            recorder.algorithm_feed = OptionChainFeed(recorder)
+            streamer = VerifiedStreamer(SimpleNamespace(configuration=config),
+                protobuf_callback=recorder.algorithm_feed.submit, max_decode_queue=64,
+                max_frame_bytes=8 * 1024 * 1024)
+        else:
+            streamer = VerifiedStreamer(SimpleNamespace(configuration=config))
+        if not algorithm_only and not getattr(args, 'no_raw_frames', False):
             streamer.raw_callback = recorder.record_frame
         streamer.auto_reconnect(True, 5, 50)
 
         def opened():
             sync_subscriptions(streamer, plan)
-            recorder.loop.call_soon_threadsafe(setattr, recorder, 'connected', True)
+            if recorder.algorithm_feed is not None:
+                recorder.loop.call_soon_threadsafe(recorder.algorithm_feed.connection, True, time.time())
+            else:
+                recorder.loop.call_soon_threadsafe(setattr, recorder, 'connected', True)
             log.info('Upstox connected; mode counts %s', {mode: len(keys) for mode, keys in plan.items()})
 
         def disconnected(*_):
-            recorder.loop.call_soon_threadsafe(setattr, recorder, 'connected', False)
+            if recorder.algorithm_feed is not None:
+                recorder.loop.call_soon_threadsafe(recorder.algorithm_feed.connection, False, time.time())
+            else:
+                recorder.loop.call_soon_threadsafe(setattr, recorder, 'connected', False)
             log.warning('Upstox stream unavailable; samples marked stale')
 
         def message(data):
@@ -179,7 +196,7 @@ async def run(args):
         for event in ('close', 'error', 'reconnecting', 'autoReconnectStopped'):
             streamer.on(event, disconnected)
         await asyncio.to_thread(streamer.connect)
-        if not getattr(args, 'no_snapshots', False):
+        if not algorithm_only and not getattr(args, 'no_snapshots', False):
             samplers.extend([asyncio.create_task(recorder.sample_index()),
                              asyncio.create_task(recorder.sample_options())])
         if getattr(args, 'analytics', ''):
@@ -211,7 +228,10 @@ async def run(args):
                     task.result()
                     raise RuntimeError('Capture worker exited unexpectedly')
             if streamer.decoder_failure:
-                raise RuntimeError('Protobuf decoding failed; raw frames retained') from streamer.decoder_failure
+                raise RuntimeError('Protobuf decoding failed' +
+                    ('; raw frames retained' if not algorithm_only and not getattr(args, 'no_raw_frames', False) else '')) from streamer.decoder_failure
+            if recorder.algorithm_feed is not None and recorder.algorithm_feed.failure:
+                raise RuntimeError('Algorithm stream cache failed') from recorder.algorithm_feed.failure
             if time.monotonic() >= token_check_at:
                 try:
                     renewed = await asyncio.to_thread(ensure_upstox_token)
@@ -237,6 +257,8 @@ async def run(args):
                               updated_at=datetime.now(IST).isoformat())
                 status['rest'] = dict(rest.status)
                 status['coverage'] = {mode: len(keys) for mode, keys in plan.items()}
+                if recorder.algorithm_feed is not None:
+                    status['algorithm_stream'] = recorder.algorithm_feed.health()
                 temporary = Path(args.output) / 'health.tmp.json'
                 temporary.write_text(json.dumps(status))
                 os.replace(temporary, Path(args.output) / 'health.json')
@@ -274,6 +296,8 @@ async def run(args):
                     log.warning('Could not close %s cleanly; continuing journal cleanup', label)
             streamer.accepting_frames = False
             await asyncio.to_thread(streamer.stop_decoder)
+        if recorder.algorithm_feed is not None:
+            recorder.algorithm_feed.close()
         await asyncio.sleep(0)
         recorder.accepting = False
         for task in samplers:
@@ -297,7 +321,7 @@ async def run(args):
             pool.shutdown(wait=True)
 
 
-if __name__ == '__main__':
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', default='D:/market-data/volatility/upstox')
     parser.add_argument('--export-interval', type=float, default=300)
@@ -314,7 +338,15 @@ if __name__ == '__main__':
     parser.add_argument('--no-snapshots', action='store_true')
     parser.add_argument('--no-raw-frames', action='store_true')
     parser.add_argument('--no-ticks', action='store_true', help='Keep selected snapshots/raw frames without decoded tick rows')
-    args = parser.parse_args()
+    parser.add_argument('--algorithm-stream', action='store_true',
+                        help='Direct Protobuf cache: minute analytics only, no raw/tick/second recordings')
+    args = parser.parse_args(argv)
+    if args.algorithm_stream:
+        args.analytics = args.analytics or 'pcr-time,exposure'
+        if set(args.analytics.split(',')) - {'pcr-time', 'exposure'}:
+            parser.error('Algorithm stream supports pcr-time and exposure only')
+        if args.context or args.depth_contracts:
+            parser.error('Algorithm stream requires only spot and option OI/IV; omit context/depth')
     if not math.isfinite(args.export_interval) or args.export_interval < 1:
         parser.error('Export interval must be >=1 second')
     if not math.isfinite(args.min_free_gb) or args.min_free_gb < 0:
@@ -339,3 +371,7 @@ if __name__ == '__main__':
         raise SystemExit(1)
     except KeyboardInterrupt:
         pass
+
+
+if __name__ == '__main__':
+    main()
