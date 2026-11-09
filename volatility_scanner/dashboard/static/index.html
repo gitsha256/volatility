@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark"><meta name="description" content="Live NIFTY option-chain algorithm observatory: PCR, exposure, Greeks and premium decomposition.">
+  <title>NIFTY / FLOW — Algorithm observatory</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1119'/%3E%3Cpath d='M13 46V18l17 28V18M39 18h14M39 30h11M39 18v28' fill='none' stroke='%2335e7bf' stroke-width='5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script src="/static/vendor/lightweight-charts-5.2.1.js" defer></script>
+  <script src="/static/dashboard.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="Nifty Flow home"><span class="brand-mark">N<span>F</span></span><span>NIFTY<span class="slash">/</span>FLOW<small>ALGORITHM OBSERVATORY</small></span></a>
+  <div class="top-status"><span class="pill" id="connection"><i></i> CONNECTING</span><span class="muted desktop" id="clock">— IST</span></div>
+</header>
+<div id="demo-banner" class="demo-banner" hidden>SIMULATED PREVIEW · Calculations use synthetic inputs. No broker connection or real market prices.</div>
+<main>
+  <section class="page-heading"><div><p class="eyebrow">NSE · NIFTY 50 · OPTIONS INTELLIGENCE</p><h1>See the structure.<br class="mobile"> Follow the flow.</h1><p class="subtitle">Every calculation, measured against the underlying.</p></div><div class="cadence"><span class="pulse-dot"></span><strong>1s</strong><span>CALCULATE</span><span class="cadence-divider">/</span><strong>60s</strong><span>RECORD</span></div></section>
+  <section class="controls" aria-label="Chart filters">
+    <label>EXPIRY<select id="expiry" aria-label="Option expiry"><option>Waiting for data…</option></select></label>
+    <label>STRIKE<select id="strike" aria-label="Strike price"><option value="all">Expiry aggregate</option></select></label>
+    <label>CANDLES<select id="interval" aria-label="Candlestick interval"><option value="60">1 minute</option><option value="300">5 minutes</option><option value="900">15 minutes</option></select></label>
+    <label>HISTORY<select id="history" aria-label="History length"><option value="120">120 one-minute bars</option><option value="240" selected>240 one-minute bars</option><option value="480">480 one-minute bars</option><option value="1440">1440 one-minute bars</option></select></label>
+    <button class="outline-button" id="fit">Fit all charts <span>↔</span></button>
+    <button class="outline-button" id="pause" aria-pressed="false">Pause display <span>Ⅱ</span></button>
+  </section>
+  <section class="quality-strip" aria-live="polite"><div><span id="quality-dot" class="status-dot"></span><strong id="quality-title">Waiting for the data stream</strong><span id="quality-detail">Start the algorithm streamer to see calculated results.</span></div><span class="mono" id="latency">— ms / cycle</span></section>
+  <section class="kpi-grid" id="kpis" aria-label="Key calculations"></section>
+  <section class="hero-grid">
+    <article class="panel nifty-panel"><div class="panel-heading"><div><span class="eyebrow">THE UNDERLYING</span><h2>NIFTY 50 <span class="tag">NSE INDEX</span></h2></div><div class="hero-quote"><strong id="nifty-price">—</strong><span id="nifty-change">Waiting for index prices</span></div></div><p id="ohlc" class="ohlc">OHLC unavailable</p><div id="hero-chart" class="hero-chart" role="img" aria-label="Live NIFTY candlestick chart"></div><div class="chart-footer"><span><i class="legend-candle"></i>NIFTY OHLC · <span id="candle-count">0</span> bars</span><span id="candle-provenance">No recorded candles</span></div></article>
+    <article class="panel context-panel"><div class="panel-heading"><div><span class="eyebrow">MODEL CONTEXT</span><h2>Structure at a glance</h2></div><span id="context-badge" class="tag">WAITING</span></div><dl id="context"></dl><div class="model-note">Call-positive / put-negative exposure is a model assumption. Missing data stays missing.</div><div class="matrix-title">LOCAL PRICE HESSIAN <span id="matrix-side">CE</span></div><div id="matrix" class="matrix"></div></article>
+  </section>
+  <section class="section-heading"><div><p class="eyebrow">SYNCHRONIZED WITH NIFTY</p><h2>The calculated landscape <span id="metric-count" class="count">0</span></h2></div><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find a calculation…" aria-label="Search calculated metrics"><kbd>/</kbd></label></section>
+  <nav class="tabs" aria-label="Calculation categories"><button data-tab="overview" class="active" aria-pressed="true">Essentials</button><button data-tab="pcr" aria-pressed="false">PCR & time</button><button data-tab="exposure" aria-pressed="false">Exposure & scenarios</button><button data-tab="greeks" aria-pressed="false">Greeks</button><button data-tab="premium" aria-pressed="false">Premium attribution</button><button data-tab="signals" aria-pressed="false">Signals & quality</button><button data-tab="all" aria-pressed="false">All calculations</button></nav>
+  <p class="chart-guide"><span class="legend-candle"></span>NIFTY candles above · <span class="legend-line"></span>calculation below · shared time axis. Pan, zoom and crosshairs synchronize.</p>
+  <section id="metrics" class="metrics-grid" aria-label="Calculated data charts"></section>
+  <div id="empty" class="empty" hidden>No matching calculations. Try another category or strike.</div>
+  <section class="panel landscape-panel"><div class="panel-heading"><div><p class="eyebrow">FROZEN IV / OI SCENARIO</p><h2>Gamma across hypothetical NIFTY levels</h2></div><span class="tag">±10% SPOT SWEEP</span></div><p class="muted">NIFTY candles above; scenario price levels below. The vertical marker is the latest NIFTY level, not a predicted future price.</p><div id="landscape-nifty" class="landscape-nifty" role="img" aria-label="Synchronized NIFTY candlestick context for Gamma scenario"></div><canvas id="landscape" height="240" aria-label="Gamma exposure scenario versus NIFTY spot" role="img"></canvas><div id="landscape-empty" class="landscape-empty">A complete expiry exposure profile is required.</div></section>
+  <section class="panel details-panel"><details><summary>Data quality & calculation definitions <span>+</span></summary><div class="definitions"><div><h3>PCR/time scores</h3><p>PCR / t, PCR / t² and PCR / t³ use ACT/365 calendar years. They are time-weighted scores, not mathematical velocity, acceleration or jerk. Actual derivatives are separate.</p></div><div><h3>Live versus recorded</h3><p>Live calculations refresh every second. Historical algorithm points are recorded every 60 seconds. Each chart updates its current candle and metric point in place; unavailable points break the line.</p></div><div><h3>Observations versus models</h3><p>Premium residuals need fresh receipt and trade timestamps. Dealer signs and IV/Charm shocks are explicit scenarios. Closed markets, expired contracts and missing IV are labeled.</p></div><div><h3>Window and freshness</h3><p>A five-minute window contains about 301 one-second samples. A gap over 2.5 seconds resets warmup. OI receipt ages over 15 seconds are withheld. First captured candles may be partial.</p></div></div></details></section>
+  <footer><span>NIFTY / FLOW <span class="muted">· Independent algorithm dashboard · No order controls</span></span><span><a href="https://www.tradingview.com/" target="_blank" rel="noopener noreferrer">Charts by TradingView Lightweight Charts™</a> · Local assets</span></footer>
+</main>
+<div id="toast" class="toast" role="status" hidden></div>
+</body></html>

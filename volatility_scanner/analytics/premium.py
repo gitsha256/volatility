@@ -17,6 +17,7 @@ class PremiumTracker:
                 or premium is not None and (not finite(premium) or premium<=0)):
             raise ValueError('Valid contract model, times, spot, IV and optional positive premium required')
         result = dict(symbol=symbol, sample_epoch=timestamp, expiry_epoch=expiry, complete=True,
+            spot=spot,iv_decimal=sigma,years_to_expiry=(expiry-timestamp)/YEAR_SECONDS,
             premium=premium, model_price=greeks['price'], greeks=greeks,
             axes=['spot','iv_decimal','calendar_year'],
             jacobian=[greeks['delta'],greeks['vega'],greeks['theta_per_year']],

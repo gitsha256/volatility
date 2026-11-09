@@ -35,6 +35,9 @@ class Recorder:
         from .algorithm import INDEX_SQL, PREMIUM_INDEX_SQL
         self.db.execute(INDEX_SQL)
         self.db.execute(PREMIUM_INDEX_SQL)
+        self.db.execute('''CREATE TABLE IF NOT EXISTS nifty_candles (
+            minute INTEGER PRIMARY KEY, open REAL, high REAL, low REAL, close REAL,
+            partial INTEGER, source TEXT, updated_epoch REAL)''')
         self.db.commit()
         self.loop = asyncio.get_running_loop()
         self.channels = {}
@@ -107,6 +110,11 @@ class Recorder:
     def record_frame(self, payload, received_at):
         self.pending.put_nowait(("raw", "", (received_at, payload), time.monotonic()))
 
+    def record_candles(self, bars):
+        for bar in bars:
+            self.pending.put_nowait(('candle','',tuple(bar[k] for k in
+                ('time','open','high','low','close','partial','source','updated_epoch')),time.monotonic()))
+
     def _write_loop(self):
         while True:
             first = self.pending.get()
@@ -124,10 +132,12 @@ class Recorder:
                 except queue.Empty:
                     break
             try:
-                events, frames = [], []
+                events, frames, candles = [], [], []
                 for kind, bucket, item, _ in batch:
                     if kind == "raw":
                         frames.append((item[0], item[1]))
+                    elif kind == 'candle':
+                        candles.append(item)
                     else:
                         now, source, payload = item
                         events.append((now.date().isoformat(), bucket,
@@ -138,6 +148,10 @@ class Recorder:
                     self.db.executemany(
                         "INSERT INTO events(day,bucket,received_at,source,payload) VALUES(?,?,?,?,?)", events)
                     self.db.executemany("INSERT INTO raw_frames(received_at,payload) VALUES(?,?)", frames)
+                    self.db.executemany('''INSERT INTO nifty_candles VALUES(?,?,?,?,?,?,?,?)
+                        ON CONFLICT(minute) DO UPDATE SET open=excluded.open,high=excluded.high,
+                        low=excluded.low,close=excluded.close,partial=excluded.partial,
+                        source=excluded.source,updated_epoch=excluded.updated_epoch''',candles)
                 self.metrics.update(
                     committed_events=self.metrics['committed_events'] + len(events),
                     committed_frames=self.metrics['committed_frames'] + len(frames),

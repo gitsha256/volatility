@@ -45,10 +45,14 @@ class OptionChainFeed:
 
     def submit(self, frame, received_at, stamp):
         received = datetime.fromisoformat(received_at).timestamp()
+        book=getattr(self.recorder,'dashboard_book',None)
         schedule = False
         with self.lock:
             if not self.accepting or received < self.cutoff:
                 return
+            if book is not None and frame.HasField('marketInfo'):
+                enum=frame.marketInfo.DESCRIPTOR.fields_by_name['segmentStatus'].message_type.fields_by_name['value'].enum_type
+                book.set_market_status({key:enum.values_by_number[value].name for key,value in frame.marketInfo.segmentStatus.items()})
             for key, feed in frame.feeds.items():
                 if key not in self.allowed:
                     continue
@@ -83,6 +87,8 @@ class OptionChainFeed:
                                       iv=data.iv if math.isfinite(data.iv) and data.iv >= 0 else None,
                                       _oi_received=received)
                 if price is not None and math.isfinite(price) and price > 0:
+                    if key==INDEX and book is not None:
+                        book.tick(price,received)
                     fields.update(ltp=price, _price_received=received,
                                   trade_epoch=trade_time/1000 if trade_time>0 else None)
             if self.pending and not self.scheduled:

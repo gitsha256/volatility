@@ -24,6 +24,7 @@ from volatility_scanner.storage.lifecycle import capture_guard
 from volatility_scanner.brokers.upstox.api.market_rest import MarketREST
 from volatility_scanner.brokers.upstox.market.coverage import discover, coverage_plan, sync_subscriptions, supplements, expiry_epoch, local_analytics
 from volatility_scanner.brokers.upstox.market.pcr_time import stream_analytics
+from volatility_scanner.dashboard.candles import CandleBook
 
 UPSTOX_INDEX = 'NSE_INDEX|Nifty 50'
 log = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ class UpstoxRecorder(Recorder):
         self.analytics_dirty = set()
         self.analytics_generation = 0
         self.algorithm_consumer = None
+        self.dashboard_book = CandleBook()
 
     def set_connected(self, connected):
         self.connected = connected
@@ -88,6 +90,7 @@ class UpstoxRecorder(Recorder):
 
     def dispatch(self, message):
         if message.get('marketInfo'):
+            self.dashboard_book.set_market_status(message['marketInfo'].get('segmentStatus',{}))
             self.enqueue('MARKET_STATUS', 'websocket', dict(message['marketInfo'],
                 socket_received_at_ist=message.get('_received_at_ist'), feed_timestamp=message.get('currentTs')))
         for key, feed in message.get('feeds', {}).items():
@@ -106,6 +109,9 @@ class UpstoxRecorder(Recorder):
                 fields['symbol'] = INDEX
                 if 'ltpc.ltp' in fields:
                     fields['ltp'] = fields['ltpc.ltp']
+                    received=message.get('_received_at_ist')
+                    epoch=datetime.fromisoformat(received).timestamp() if received else time.time()
+                    self.dashboard_book.tick(fields['ltp'],epoch)
                 super().dispatch(fields)
                 self.enqueue('NIFTY50', 'websocket', fields)
             elif key in self.symbols:
@@ -132,6 +138,11 @@ class UpstoxRecorder(Recorder):
                 self.latest[key] = fields
                 self.received[key] = time.time()
                 self.enqueue(self.context[key], 'websocket', fields)
+
+    async def sample_candles(self):
+        while True:
+            self.record_candles(self.dashboard_book.drain())
+            await asyncio.sleep(1)
 
     async def sample_options(self):
         deadline = time.monotonic()
@@ -165,7 +176,13 @@ async def run(args):
     stop_file = Path(args.output) / 'stop.request'
     health_at = time.monotonic()
     export_result = None
+    dashboard = None
     try:
+        if getattr(args,'dashboard_port',0):
+            from volatility_scanner.dashboard.server import DashboardServer
+            dashboard=DashboardServer(args.output,recorder=recorder)
+            await dashboard.start(args.dashboard_port)
+            log.info('Algorithm dashboard: http://127.0.0.1:%s',args.dashboard_port)
         contracts, futures, spot = await asyncio.to_thread(discover, rest, getattr(args, 'expiry_scope', 'front_two'),
                                                          getattr(args, 'context', False))
         if not getattr(args, 'context', False):
@@ -223,6 +240,9 @@ async def run(args):
         for event in ('close', 'error', 'reconnecting', 'autoReconnectStopped'):
             streamer.on(event, disconnected)
         await asyncio.to_thread(streamer.connect)
+        samplers.append(asyncio.create_task(recorder.sample_candles()))
+        if dashboard is not None:
+            dashboard.seed_task=asyncio.create_task(dashboard.seed_history(rest))
         if not algorithm_only and not getattr(args, 'no_snapshots', False):
             samplers.extend([asyncio.create_task(recorder.sample_index()),
                              asyncio.create_task(recorder.sample_options())])
@@ -329,6 +349,9 @@ async def run(args):
             await asyncio.to_thread(streamer.stop_decoder)
         if recorder.algorithm_feed is not None:
             recorder.algorithm_feed.close()
+        recorder.record_candles(recorder.dashboard_book.drain())
+        if dashboard is not None:
+            await dashboard.close()
         await asyncio.sleep(0)
         recorder.accepting = False
         for task in samplers:
@@ -375,7 +398,10 @@ def main(argv=None):
     parser.add_argument('--no-ticks', action='store_true', help='Keep selected snapshots/raw frames without decoded tick rows')
     parser.add_argument('--algorithm-stream', action='store_true',
                         help='Direct Protobuf cache: minute analytics only, no raw/tick/second recordings')
+    parser.add_argument('--dashboard-port',type=int,default=0,help='Serve separate live dashboard on loopback (0 disables)')
     args = parser.parse_args(argv)
+    if not 0<=args.dashboard_port<=65535:
+        parser.error('Dashboard port must be 0..65535')
     if args.algorithm_stream:
         args.analytics = args.analytics or 'pcr-time,exposure'
         if set(args.analytics.split(',')) - {'pcr-time', 'exposure'}:

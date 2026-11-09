@@ -695,3 +695,13 @@ premium decomposition, Color/Ultima, Charm/IV scenarios, Gamma curves/transition
 and localized OTM/derivative-spike diagnostics. Contract results are retrievable
 with `source='premium_minute'`. See the design's coverage and limitations table;
 these analytics do not submit orders.
+
+Separate live dashboard (no reuse of the existing Streamlit UI):
+
+```powershell
+python stream_option_chain.py --dashboard-port 8765
+```
+
+Open **http://127.0.0.1:8765** for live metric charts paired with synchronized
+NIFTY candlesticks, expiry/strike filters, model tensors and data-quality status.
+See [dashboard usage, architecture and verification](docs/algorithm-dashboard.md).
