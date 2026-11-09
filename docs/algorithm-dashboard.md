@@ -59,6 +59,54 @@ are simulated. It never writes them into a live capture database.
   history, simulated preview and paused display are distinguished. NIFTY status
   uses NSE_INDEX/NSE_EQ; an open commodity market does not make NIFTY live.
 
+### Last valid ratios
+
+When fresh inputs disappear, live PCR scores remain invalid in the algorithm.
+The dashboard separately retains the latest valid PCR/time snapshot per selected
+strike/expiry. PCR, PCR/time, PCR/time², PCR/time³, OI totals and max pain can be
+displayed from that snapshot with an explicit **SNAPSHOT** label, calculation
+timestamp and input-receipt age. Time-weighted scores are frozen at that
+calculation timestamp; they are not recomputed as if old OI were fresh.
+Snapshot chart points use a dotted/marked presentation. Signals and derivatives
+are not restored from this cache, and live validity is never changed. This
+in-memory cache is refreshed by valid calculations and bounded to selected
+buckets; a process restart requires a new broker snapshot.
+
+### DEMA and Supertrend overlays
+
+All time-series panes have 25 DEMA (green), 55 DEMA (yellow), 105 DEMA (red)
+and Supertrend using Wilder ATR length 10 and multiplier 3. Supertrend is green
+in its up state and red in its down state. The Gamma scenario curve itself is
+not a time-series and does not get temporal studies; its NIFTY candle context
+does. The existing layout is preserved: candles are the NIFTY reference, while
+ratios and other calculated metrics remain lines in a separate pane.
+
+DEMA is `2*EMA(close)-EMA(EMA(close))`, with EMA seeded at the first available
+close and alpha `2/(period+1)`. Early values therefore have seed warmup; no
+unobserved prehistory is invented. Indicator periods count selected chart bars,
+not one-second calculation ticks. The forming bar is recalculated from the
+previous completed state on each update, so repeated second-by-second updates
+do not double-count a bar. Normal updates are constant-time; history/scope/
+timeframe changes rebuild the visible bounded series.
+
+NIFTY studies use broker/captured OHLC. Metric DEMA can use historical closes;
+metric Supertrend uses only OHLC accumulated from **observed live one-second
+metric values**. Historical minute snapshots do not contain their full ranges
+and are never promoted into invented OHLC. Partial-start or gapped metric bars
+are excluded from ATR warmup. The pane labels the Supertrend warmup count until
+10 usable observed bars exist. Metric OHLC is internal; it is not plotted as
+another candlestick series. Missing values reset dependent indicator state.
+
+References: [TradingView DEMA](https://www.tradingview.com/support/solutions/43000589132-double-exponential-moving-average-ema/),
+[Supertrend](https://www.tradingview.com/support/solutions/43000634738-supertrend/),
+[Wilder ATR](https://www.tradingview.com/support/solutions/43000501823-average-true-range-atr/).
+
+Run mathematical/intrabar indicator checks with:
+
+```powershell
+node --test tests/apps/test_studies.cjs
+```
+
 ## Fast path and bounds
 
 The frontend is native JavaScript/CSS with locally bundled Lightweight Charts

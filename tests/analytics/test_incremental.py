@@ -35,6 +35,11 @@ class TestIncremental(unittest.TestCase):
         self.assertFalse(result['valid'])
         self.assertEqual(result['call_oi'],0)
         self.assertEqual(result['put_oi'],0)
+        snapshot=scanner.last_valid_ratios['2026-12-03_PCR_TIME']['data']
+        self.assertEqual(snapshot['pcr'],4)
+        self.assertEqual(snapshot['sample_epoch'],now+1)
+        self.assertEqual(snapshot['input_receipt_epoch'],now)
+        self.assertIsNone(result['pcr'])
 
     def test_unchanged_receipt_refresh_and_reconnection(self):
         state,now=self.state();scanner=StreamingAnalytics()

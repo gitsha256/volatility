@@ -68,6 +68,8 @@ class TestAlgorithmDashboard(unittest.IsolatedAsyncioTestCase):
         self.assertIn("default-src 'self'",response.headers['Content-Security-Policy'])
         response=await self.client.get('/static/dashboard.js')
         self.assertEqual(response.status,200)
+        response=await self.client.get('/static/studies.js')
+        self.assertEqual(response.status,200)
         response=await self.client.get('/',headers={'Host':'attacker.example'})
         self.assertEqual(response.status,403)
         with self.assertRaises(WSServerHandshakeError):
@@ -111,3 +113,28 @@ class TestAlgorithmDashboard(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(data['connected'])
         self.assertIsNone(data['latest_epoch'])
         self.assertEqual(data['mode'],'live')
+
+    async def test_last_valid_ratio_snapshot_does_not_restore_live_validity(self):
+        base=datetime(2026,12,2,10,tzinfo=IST).timestamp()
+        self.recorder.connected=True
+        self.recorder.index={'ltp':25000}
+        self.recorder.index_received=base
+        for row in self.rows:
+            self.recorder.latest[row['symbol']]={'oi':100 if row['option_type']=='CE' else 200,'iv':20}
+            self.recorder.received[row['symbol']]=base
+        consumer=StreamingAnalytics()
+        self.recorder.algorithm_consumer=consumer
+        consumer.consume(self.recorder,base)
+        self.recorder.index_received=base+16
+        consumer.consume(self.recorder,base+16)
+        ws=await self.client.ws_connect('/ws')
+        await ws.send_json(dict(expiry='2026-12-03',points=120))
+        value=await ws.receive_json(timeout=3)
+        current=next(e['data'] for e in value['current'] if e['source']=='pcr_time_minute')
+        snapshot=value['ratio_snapshots'][0]
+        self.assertFalse(current['valid'])
+        self.assertIsNone(current['pcr'])
+        self.assertEqual(snapshot['data']['pcr'],2)
+        self.assertTrue(snapshot['snapshot'])
+        self.assertNotIn('positioning_derivative_alert',snapshot['data'])
+        await ws.close()

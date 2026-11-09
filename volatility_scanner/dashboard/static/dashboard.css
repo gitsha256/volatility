@@ -7,3 +7,7 @@
 .ohlc{margin:0 20px 9px;font:9px var(--mono);line-height:1.7;color:var(--muted)}
 
 .nifty-panel{display:flex;flex-direction:column}.nifty-panel .hero-chart{flex:1;min-height:290px}
+
+.kpi.snapshot{border-color:#705037}.kpi.snapshot .foot{color:var(--orange);line-height:1.6}.kpi.snapshot strong{color:var(--orange)}
+
+.study-legend{display:flex;gap:18px;flex-wrap:wrap;margin:7px 0 15px;font:10px var(--mono);color:var(--muted)}.dema25{color:#36dd8b}.dema55{color:#f5d84e}.dema105{color:#ff5964}.study-status{font:8px var(--mono);line-height:1.6;padding:2px 16px 9px;color:var(--muted)}

@@ -44,7 +44,7 @@ class DashboardServer:
         self.app.router.add_static('/static/',str(files('volatility_scanner.dashboard').joinpath('static')))
 
     async def index(self,request):
-        return web.Response(text=files('volatility_scanner.dashboard').joinpath('static/index.html').read_text(),
+        return web.Response(text=files('volatility_scanner.dashboard').joinpath('static/index.html').read_text(encoding='utf-8'),
                             content_type='text/html',headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
 
     def contracts(self):
@@ -111,13 +111,22 @@ class DashboardServer:
             self._index,self._epoch=index,consumer.latest_epoch
         return [event for target in self.targets(selection) for event in self._index.get(target,[])]
 
+    def ratio_snapshots(self,selection):
+        consumer=self.recorder.algorithm_consumer if self.recorder else self.demo.scanner if self.demo else None
+        if consumer is None:
+            return []
+        saved=getattr(consumer,'last_valid_ratios',{})
+        return [saved[bucket] for bucket,source in self.targets(selection)
+                if source=='pcr_time_minute' and bucket in saved]
+
     async def snapshot(self,selection):
         if self.demo:
             history=self.demo.history(self.targets(selection),selection['points'])
         else:
             history=await asyncio.to_thread(self.store.history,self.targets(selection),selection['points'])
         return dict(type='snapshot',selection=selection,catalog=self.catalog(),meta=self.metadata(),
-            candles=self.book.snapshot(selection['points']),history=history,current=self.current(selection))
+            candles=self.book.snapshot(selection['points']),history=history,current=self.current(selection),
+            ratio_snapshots=self.ratio_snapshots(selection))
 
     async def websocket(self,request):
         origin=request.headers.get('Origin')
@@ -165,6 +174,7 @@ class DashboardServer:
                         current=await asyncio.to_thread(self.store.history,self.targets(selection),1)
                         self.book.seed(await asyncio.to_thread(self.store.candles,selection['points']))
                     cache[key]=json.dumps(dict(type='update',selection=selection,catalog=self.catalog(),meta=self.metadata(),current=current,
+                        ratio_snapshots=self.ratio_snapshots(selection),
                         candles=self.book.snapshot(selection['points'] if reset else 3),candles_reset=reset),allow_nan=False,separators=(',',':'))
                 sends.append(self.send_update(ws,cache[key]))
             if sends:

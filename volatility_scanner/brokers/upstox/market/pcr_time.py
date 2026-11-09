@@ -8,6 +8,9 @@ from volatility_scanner.analytics.exposure import exposure_profile, spot_greeks
 from volatility_scanner.analytics.premium import PremiumTracker
 from .coverage import expiry_epoch
 
+RATIO_SNAPSHOT_FIELDS=('sample_epoch','expiry_epoch','input_receipt_epoch','expiry','scope','strike',
+                       'call_oi','put_oi','pcr','pcr_over_t','pcr_over_t2','pcr_over_t3','max_pain')
+
 
 class StreamingAnalytics:
     def __init__(self, *, pcr=True, exposure=False, iv_unit='percent', oi_multiplier=1.0,
@@ -30,6 +33,7 @@ class StreamingAnalytics:
         self.expirations = []
         self.generation = None
         self.latest_output = ()
+        self.last_valid_ratios = {}
         self.latest_epoch = None
         self.calculation_ms = self.max_calculation_ms = 0.0
         self.missed_samples = 0
@@ -127,6 +131,8 @@ class StreamingAnalytics:
                         call_oi=counts[0], put_oi=counts[1], spot=spot, valid=valid)
                     result.update(strike=strike, expiry=expiry, scope='selected_strike_pair',
                                   call_oi=counts[0], put_oi=counts[1])
+                    result['input_receipt_epoch']=min((recorder.received[r['symbol']] for r in contracts
+                        if finite(recorder.received.get(r['symbol']))),default=None)
                     samples.append(result)
             expected = sum(map(len, strikes.values()))
             pcr_context = None
@@ -136,6 +142,8 @@ class StreamingAnalytics:
                     call_oi=totals[0], put_oi=totals[1], spot=spot, valid=complete)
                 result.update(expiry=expiry, scope='selected_expiry_contracts', contracts_expected=expected,
                               call_oi=totals[0], put_oi=totals[1], connected=recorder.connected)
+                result['input_receipt_epoch']=min((sample['input_receipt_epoch'] for sample in samples
+                    if finite(sample['input_receipt_epoch'])),default=None)
                 result['max_pain'] = max_pain_strike({strike:self.strike_cache[expiry,strike]['counts']
                     for strike in strikes}) if complete and timestamp<end else None
                 result['distance_to_max_pain'] = spot-result['max_pain'] if result['max_pain'] is not None else None
@@ -232,6 +240,12 @@ class StreamingAnalytics:
                 self.exposure_previous.clear()
                 self.premiums.previous.clear()
         self.latest_output = tuple(self.calculate(recorder, timestamp))
+        allowed={bucket for bucket,source,_ in self.latest_output if source=='pcr_time_minute'}
+        self.last_valid_ratios={bucket:row for bucket,row in self.last_valid_ratios.items() if bucket in allowed}
+        for bucket,source,payload in self.latest_output:
+            if source=='pcr_time_minute' and payload.get('valid'):
+                self.last_valid_ratios[bucket]=dict(bucket=bucket,source=source,snapshot=True,
+                    data=dict({key:payload[key] for key in RATIO_SNAPSHOT_FIELDS if key in payload},valid=True))
         self.latest_epoch = timestamp
         self.calculation_ms = (time.perf_counter_ns() - started) / 1e6
         self.max_calculation_ms = max(self.max_calculation_ms, self.calculation_ms)

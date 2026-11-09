@@ -7,6 +7,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1119'/%3E%3Cpath d='M13 46V18l17 28V18M39 18h14M39 30h11M39 18v28' fill='none' stroke='%2335e7bf' stroke-width='5'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/dashboard.css">
   <script src="/static/vendor/lightweight-charts-5.2.1.js" defer></script>
+  <script src="/static/studies.js" defer></script>
   <script src="/static/dashboard.js" defer></script>
 </head>
 <body>
@@ -25,6 +26,7 @@
     <button class="outline-button" id="fit">Fit all charts <span>↔</span></button>
     <button class="outline-button" id="pause" aria-pressed="false">Pause display <span>Ⅱ</span></button>
   </section>
+  <div class="study-legend"><span class="dema25">━ 25 DEMA</span><span class="dema55">━ 55 DEMA</span><span class="dema105">━ 105 DEMA</span><span>┄ Supertrend 10, 3 · green up / red down</span><span class="muted">Studies use the selected bar interval.</span></div>
   <section class="quality-strip" aria-live="polite"><div><span id="quality-dot" class="status-dot"></span><strong id="quality-title">Waiting for the data stream</strong><span id="quality-detail">Start the algorithm streamer to see calculated results.</span></div><span class="mono" id="latency">— ms / cycle</span></section>
   <section class="kpi-grid" id="kpis" aria-label="Key calculations"></section>
   <section class="hero-grid">
@@ -33,7 +35,7 @@
   </section>
   <section class="section-heading"><div><p class="eyebrow">SYNCHRONIZED WITH NIFTY</p><h2>The calculated landscape <span id="metric-count" class="count">0</span></h2></div><label class="search"><span>⌕</span><input id="search" type="search" placeholder="Find a calculation…" aria-label="Search calculated metrics"><kbd>/</kbd></label></section>
   <nav class="tabs" aria-label="Calculation categories"><button data-tab="overview" class="active" aria-pressed="true">Essentials</button><button data-tab="pcr" aria-pressed="false">PCR & time</button><button data-tab="exposure" aria-pressed="false">Exposure & scenarios</button><button data-tab="greeks" aria-pressed="false">Greeks</button><button data-tab="premium" aria-pressed="false">Premium attribution</button><button data-tab="signals" aria-pressed="false">Signals & quality</button><button data-tab="all" aria-pressed="false">All calculations</button></nav>
-  <p class="chart-guide"><span class="legend-candle"></span>NIFTY candles above · <span class="legend-line"></span>calculation below · shared time axis. Pan, zoom and crosshairs synchronize.</p>
+  <p class="chart-guide"><span class="legend-candle"></span>Upper pane: NIFTY reference candles · <span class="legend-line"></span>Lower pane: calculated metric line. Both show DEMA / Supertrend overlays. Metric OHLC is computed internally, not displayed as candles.</p>
   <section id="metrics" class="metrics-grid" aria-label="Calculated data charts"></section>
   <div id="empty" class="empty" hidden>No matching calculations. Try another category or strike.</div>
   <section class="panel landscape-panel"><div class="panel-heading"><div><p class="eyebrow">FROZEN IV / OI SCENARIO</p><h2>Gamma across hypothetical NIFTY levels</h2></div><span class="tag">±10% SPOT SWEEP</span></div><p class="muted">NIFTY candles above; scenario price levels below. The vertical marker is the latest NIFTY level, not a predicted future price.</p><div id="landscape-nifty" class="landscape-nifty" role="img" aria-label="Synchronized NIFTY candlestick context for Gamma scenario"></div><canvas id="landscape" height="240" aria-label="Gamma exposure scenario versus NIFTY spot" role="img"></canvas><div id="landscape-empty" class="landscape-empty">A complete expiry exposure profile is required.</div></section>
