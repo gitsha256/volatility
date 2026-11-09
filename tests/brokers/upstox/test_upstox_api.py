@@ -158,9 +158,11 @@ class TestPortfolio(unittest.TestCase):
         thread.start()
         stream._queue.put(json.dumps({'update_type':'order','order_id':'1'}))
         stream._queue.put(json.dumps({'update_type':'position'}))
+        stream._queue.put(json.dumps({'update_type':'holding','quantity':2}))
+        stream._queue.put(json.dumps({'update_type':'gtt_order','status':'active'}))
         stream._queue.put(None)
         thread.join()
-        self.assertEqual([x['update_type'] for x in seen],['order','position'])
+        self.assertEqual([x['update_type'] for x in seen],['order','position','holding','gtt_order'])
         api.session.request.assert_not_called()
         api.close()
 

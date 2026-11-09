@@ -5,6 +5,7 @@ scanner.db
 .venv/
 .venv-py314/
 *.log
+*.har
 .env
 .env.*
 !.env.example

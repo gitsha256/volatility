@@ -125,6 +125,12 @@ class APIClient:
             location = '.'.join(str(part) for part in error.absolute_path) or 'request'
             # Validation messages can embed supplied PINs/tokens. Return schema location only.
             raise RequestError(f'{operation}: invalid {location} ({error.validator})')
+        if operation == 'updateUserIp':
+            from ..account.ip_whitelist import validate_ips
+            try:
+                validate_ips(body)
+            except ValueError as error:
+                raise RequestError(str(error)) from None
         resource_path = endpoint.path
         for name, value in values['path'].items():
             resource_path = resource_path.replace('{' + name + '}', quote(str(value), safe=''))

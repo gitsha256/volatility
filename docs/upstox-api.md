@@ -197,3 +197,32 @@ Supply request sections as `path={...}`, `query={...}`, `headers={...}`, and `bo
 | [cancelOrder](https://upstox.com/developer/api-documentation/v3/cancel-order) | DELETE | `/v3/order/cancel` | yes |
 | [cancelMultiOrder](https://upstox.com/developer/api-documentation/cancel-multi-order) | DELETE | `/v2/order/multi/cancel` | no |
 | [cancelOrder_1](https://upstox.com/developer/api-documentation/cancel-order) | DELETE | `/v2/order/cancel` | yes |
+# IP whitelist workflow
+
+The supplied HAR captures the My Apps website using `GET/PUT
+https://service.upstox.com/uplink/user/ip` and `GET
+/uplink/user/ip/family-conflicts`. Its website-only `is_multiclient` field and
+browser session headers are not part of the public token-authenticated API.
+The app uses the documented `GET/PUT https://api.upstox.com/v2/user/ip` instead.
+HAR files can contain session credentials and are excluded from Git.
+
+```powershell
+python upstox_api.py --profile algo --ip-status
+python upstox_api.py --profile algo --ip-update 49.47.131.238 --allow-live-mutations
+python upstox_api.py --profile algo --ip-update PRIMARY_IP --secondary-ip SECONDARY_IP --allow-live-mutations
+```
+
+Replace the IP arguments with your assigned static public addresses. The workflow
+validates IPv4/IPv6, preserves the existing secondary IP when omitted, and skips
+unchanged writes. Successful changes renew the selected profile's token through
+the existing TOTP flow; same-app aliases are synchronized. Other apps/sessions
+may still need fresh tokens. Renewal failure is reported separately from a
+successful IP update. Generic `api.account.updateUserIp(body=...)` remains
+available and requires the caller to handle renewal.
+
+Upstox permits one change per calendar week and invalidates existing access
+tokens after an update. Updates are never retried automatically; an uncertain
+outcome must be reconciled by reading the registered addresses.
+
+References: [Get Static IPs](https://upstox.com/developer/api-documentation/get-app-static-ips/),
+[Update Static IPs](https://upstox.com/developer/api-documentation/update-app-static-ips/).
