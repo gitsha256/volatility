@@ -37,6 +37,7 @@ class OptionChainFeed:
             self.cutoff = timestamp
             self.pending.clear()
         self.recorder.connected = connected
+        self.recorder.analytics_generation = getattr(self.recorder, 'analytics_generation', 0) + 1
         self.recorder.received.clear()
         self.recorder.index_received = None
 
@@ -100,7 +101,14 @@ class OptionChainFeed:
                         self.recorder.index.update(ltp=fields['ltp'])
                         self.recorder.index_received = price_received
                 elif key in self.recorder.contracts:
-                    self.recorder.latest.setdefault(key, {}).update(fields)
+                    previous = self.recorder.latest.setdefault(key, {})
+                    old_received = self.recorder.received.get(key)
+                    dirty = getattr(self.recorder, 'analytics_dirty', None)
+                    if dirty is not None and oi_received is not None and (
+                            previous.get('oi') != fields.get('oi') or previous.get('iv') != fields.get('iv')
+                            or old_received is None or oi_received - old_received > 15):
+                        dirty.add(key)
+                    previous.update(fields)
                     if oi_received is not None:
                         self.recorder.received[key] = oi_received
                 self.receive_to_cache_ms = (time.perf_counter_ns() - stamp) / 1e6

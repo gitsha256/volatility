@@ -44,13 +44,14 @@ class TestStreamAnalytics(unittest.IsolatedAsyncioTestCase):
         return now
 
     async def test_stream_to_minute_storage_export_and_indexed_retrieval(self):
-        for minute in range(6):
-            now = self.ticks(minute)
-            events = list(self.scanner.calculate(self.recorder, now))
-            for bucket, source, payload in events:
-                json.dumps(payload, allow_nan=False)
-                self.recorder.enqueue(bucket, source, payload)
-            await self.recorder.drain()
+        for second in range(301):
+            now = self.ticks(second / 60)
+            events = self.scanner.consume(self.recorder, now)
+            if second % 60 == 0:
+                for bucket, source, payload in events:
+                    json.dumps(payload, allow_nan=False)
+                    self.recorder.enqueue(bucket, source, payload)
+                await self.recorder.drain()
         path = Path(self.temp.name, 'capture.sqlite3')
         first = read_algorithm_events(path, bucket='2026-12-03_PCR_TIME', source='pcr_time_minute', limit=2)
         second = read_algorithm_events(path, bucket='2026-12-03_PCR_TIME', source='pcr_time_minute', after_id=first[-1]['id'])
@@ -85,11 +86,11 @@ class TestStreamAnalytics(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(any(e[2].get('valid') for e in disconnected))
 
     async def test_rollover_clears_only_changed_expiry_history(self):
-        for minute in range(6):
-            list(self.scanner.calculate(self.recorder, self.ticks(minute)))
+        for second in range(301):
+            list(self.scanner.calculate(self.recorder, self.ticks(second / 60)))
         self.rows = [row for row in self.rows if row['expiry_date'] == '2026-12-10']
         self.recorder.configure(self.rows, [], {'full': {r['symbol'] for r in self.rows}})
-        results = list(self.scanner.calculate(self.recorder, self.ticks(6)))
+        results = list(self.scanner.calculate(self.recorder, self.ticks(301 / 60)))
         self.assertTrue(all(key[0] == '2026-12-10' for key in self.scanner.scanner.history))
         aggregate = next(e[2] for e in results if e[0] == '2026-12-10_PCR_TIME')
         self.assertTrue(aggregate['window_ready'])

@@ -1,7 +1,8 @@
-"""Minute-sampled PCR/time scores, distinct from empirical PCR derivatives."""
+"""Incremental second-sampled PCR windows; derivatives retain per-minute units."""
 from collections import deque
 from dataclasses import dataclass
 import math
+from itertools import islice
 
 YEAR_SECONDS = 365 * 86400
 
@@ -14,7 +15,8 @@ def derivative(samples, order):
     """Backward Lagrange finite difference at the newest timestamp, in minutes."""
     if len(samples) < order + 1:
         return None
-    points = list(samples)[-order - 1:]
+    points = list(islice(reversed(samples), order + 1))
+    points.reverse()
     origin = points[-1][0]
     xs = [(point[0] - origin) / 60 for point in points]
     result = 0.0
@@ -37,7 +39,7 @@ def derivative(samples, order):
 class PCRTimeConfig:
     window_seconds: float = 300
     min_expiry_seconds: float = 60
-    max_gap_seconds: float = 90
+    max_gap_seconds: float = 2.5
     flat_spot_fraction: float = 0.001
     spike_fraction: float = 5.0
 
@@ -46,8 +48,32 @@ class PCRTimeConfig:
                   self.flat_spot_fraction, self.spike_fraction)
         if not all(finite(v) for v in values) or min(values) <= 0:
             raise ValueError('PCR configuration values must be finite and positive')
-        if self.window_seconds < 60 or self.max_gap_seconds < 60:
-            raise ValueError('Window and maximum gap must support minute sampling')
+        if self.window_seconds < 1 or self.max_gap_seconds < 1:
+            raise ValueError('Window and maximum gap must support second sampling')
+
+
+class RollingWindow(deque):
+    """One-second ring plus monotonic extrema queues: amortized O(1) updates."""
+    def __init__(self, seconds):
+        super().__init__(maxlen=math.ceil(seconds) + 4)
+        self.minimum, self.maximum = deque(), deque()
+
+    def clear(self):
+        super().clear()
+        self.minimum.clear()
+        self.maximum.clear()
+
+    def push(self, sample, seconds):
+        self.append(sample)
+        target = sample[0] - seconds
+        while len(self) > 1 and self[1][0] <= target:
+            self.popleft()
+        for queue, minimum in ((self.minimum, True), (self.maximum, False)):
+            while queue and (queue[-1][1] >= sample[2] if minimum else queue[-1][1] <= sample[2]):
+                queue.pop()
+            queue.append((sample[0], sample[2]))
+            while queue[0][0] < self[0][0]:
+                queue.popleft()
 
 
 class PCRTimeScanner:
@@ -75,7 +101,9 @@ class PCRTimeScanner:
         if reason:
             self.history.pop(key, None)
             return dict(result, reason=reason)
-        history = self.history.setdefault(key, deque(maxlen=math.ceil(self.config.window_seconds / 60) + 4))
+        history = self.history.get(key)
+        if history is None:
+            history = self.history[key] = RollingWindow(self.config.window_seconds)
         if history and timestamp <= history[-1][0]:
             return dict(result, reason='non_increasing_timestamp')
         if history and timestamp - history[-1][0] > self.config.max_gap_seconds:
@@ -87,10 +115,8 @@ class PCRTimeScanner:
         if not all(math.isfinite(v) for v in (pcr, *scores)):
             self.history.pop(key, None)
             return dict(result, reason='numeric_overflow')
-        history.append((timestamp, pcr, spot, scores[2], effective_seconds))
+        history.push((timestamp, pcr, spot, scores[2], effective_seconds), self.config.window_seconds)
         target = timestamp - self.config.window_seconds
-        while len(history) > 1 and history[1][0] <= target:
-            history.popleft()
         floored = remaining < self.config.min_expiry_seconds
         result.update(valid=True, reason=None, pcr=pcr, seconds_to_expiry=remaining,
                       time_years=t, time_floor_active=floored,
@@ -104,7 +130,7 @@ class PCRTimeScanner:
         if baseline[0] <= target and target - baseline[0] <= self.config.max_gap_seconds:
             result['window_ready'] = True
             result['window_elapsed_seconds'] = timestamp - baseline[0]
-            spot_range = (max(row[2] for row in history) - min(row[2] for row in history)) / baseline[2]
+            spot_range = (history.maximum[0][1] - history.minimum[0][1]) / baseline[2]
             result['spot_range_fraction'] = spot_range
             result['spot_flat'] = spot_range <= self.config.flat_spot_fraction
             result['time_only_growth_fraction'] = (baseline[4] / effective_seconds) ** 3 - 1

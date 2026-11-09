@@ -14,7 +14,7 @@ python stream_option_chain.py --expiry-scope front_two
 
 This launches the existing lifecycle with `option_greeks` for the options and
 `full` for NIFTY spot. It streams all selected strikes, not just ATM, and computes
-the configured analytics once per minute. Output defaults to
+the configured analytics every second and publishes ready results every 60 seconds. Output defaults to
 `D:/market-data/volatility/algorithm-stream`; `--output`, `--stop`, expiry scope,
 IV units and OI multiplier flags work as on the recorder.
 
@@ -66,12 +66,25 @@ python record_upstox.py --expiry-scope front_two --feed-mode full --analytics pc
 ```
 
 The existing V3 WebSocket updates the per-instrument dictionary on every decoded
-tick. At each minute boundary, a snapshot of that dictionary is processed on the
+tick. A one-second consumer processes that dictionary incrementally on the
 capture event loop without network calls or awaits. Quotes arriving during the
 calculation remain queued and are processed afterward. This gives each
 calculation a consistent cache view without copying the full history or locking
 the socket thread. Exact cross-instrument exchange-time synchronization is not
 available from these independently arriving quotes.
+
+Producers mark OI/IV changes in a bounded dirty-key set. The consumer subtracts
+old contributions and adds new ones to cached strike/expiry OI totals; unchanged
+values reuse state. A bounded lazy deadline heap expires stale observations even
+without new ticks. Receipt-only refreshes extend deadlines without recomputing
+OI totals. Reconnect generations reset dependent state. The current completed
+batch is exposed in process as `recorder.algorithm_consumer.latest_output` and
+its epoch as `latest_epoch`; minute publication queues that ready batch through
+the existing writer. There is no minute-boundary historical batch calculation.
+Only minute publications reach SQLite/Excel, so output storage does not increase
+60-fold. Health includes calculation duration, maximum duration, and missed
+one-second sample slots. Delays do not fabricate samples or backfill missed
+minutes, and gaps reset derivative/alert warmup.
 
 Opt in with `pcr-time`, `exposure`, or both. `ltpc` mode is rejected because it
 does not supply OI/IV. The existing `local` analytics option remains independent.
@@ -96,7 +109,9 @@ For each expiry and each matched CE/PE strike pair:
    backward Lagrange finite differences over 2/3/4 observations and actual
    timestamp spacing. Units are PCR/minute, PCR/minute² and PCR/minute³.
    Also record the observed cubic-score change per minute.
-6. Keep five minutes of history in bounded deques. A gap over 90s or an invalid
+6. Keep five minutes of one-second history in bounded deques (normally 301
+   samples per series), with monotonic min/max queues for amortized O(1) range
+   updates. Derivatives read only the last four observations. A gap over 2.5s or an invalid
    sample resets that key's history. Changed contract membership resets that
    expiry's history; unchanged expiries retain it. Restart requires fresh warmup.
 7. After five minutes, report score growth, PCR growth, clock-only cubic growth,
@@ -155,8 +170,11 @@ and `YYYY-MM-DD_EXPOSURE`. Sources are `pcr_time_minute` and `exposure_minute`.
 Existing hourly Excel export picks up the new fields automatically.
 
 Contract/strike lookup is dictionary-based. Groups rebuild only when the
-discovery contract dictionary changes. PCR work is O(contracts + strikes*log
-strikes); temporal history is O(strikes*window_minutes). Greek base evaluation
+discovery contract dictionary changes. OI totals update in O(changed instruments),
+with O(log contracts) deadline maintenance and amortized heap compaction. PCR
+time scores still update for every strike because time changes each second;
+strike sorting costs O(strikes*log strikes). Temporal history is bounded at
+O(strikes*window_seconds), not the full session. Greek base evaluation
 is O(contracts), with a bounded spot sweep/bisection cost. The partial SQLite
 index `(bucket,source,id)` indexes only algorithm rows. Existing databases incur
 a one-time scan to create this index at startup.
@@ -177,3 +195,19 @@ amplification, zero/missing OI, time floors, expiry/disconnection, membership
 rollover, exposure scaling, gamma roots, stream-cache integration, SQLite index
 selection, cursor pagination and Excel output. Synthetic tests establish
 implementation behavior, not economic predictive power or profitability.
+
+## Reproducible one-second speed measurement
+
+```powershell
+python -m volatility_scanner.apps.benchmark_incremental --seconds 600
+python -m volatility_scanner.apps.benchmark_incremental --seconds 600 --pcr-only
+```
+
+The benchmark uses 560 options across two expiries, six OI changes per second,
+receipt refreshes for all instruments, and a full five-minute sliding window.
+It reports mean/P50/P95/maximum one-second calculation time, input update cost,
+ready-batch queue handoff cost and bounded state sizes. Reported publication is
+an in-memory queue handoff, not SQLite/Excel commit or end-to-end latency.
+Nonlinear Greeks and the gamma-flip landscape revalue each second: unchanged OI
+does not imply unchanged exposure when spot or time changes. No stale Greek
+result is substituted solely to improve benchmark numbers.

@@ -6,8 +6,8 @@ from volatility_scanner.analytics.exposure import exposure_profile, spot_greeks
 
 
 class TestPCRTime(unittest.TestCase):
-    def update(self, scanner, minute, **changes):
-        args = dict(timestamp=minute * 60, expiry=YEAR_SECONDS, call_oi=100, put_oi=100, spot=25000)
+    def update(self, scanner, second, **changes):
+        args = dict(timestamp=second, expiry=YEAR_SECONDS, call_oi=100, put_oi=100, spot=25000)
         args.update(changes)
         return scanner.update(('expiry', 25000), **args)
 
@@ -15,7 +15,7 @@ class TestPCRTime(unittest.TestCase):
         scanner = PCRTimeScanner()
         first = self.update(scanner, 0)
         self.assertEqual(first['pcr_over_t3'], 1)
-        for minute in range(1, 6):
+        for minute in range(1, 301):
             last = self.update(scanner, minute)
         self.assertTrue(last['window_ready'])
         self.assertGreater(last['pcr_over_t3'], 1)
@@ -27,14 +27,14 @@ class TestPCRTime(unittest.TestCase):
     def test_five_minute_alert_and_full_window_spot_range(self):
         for moved in (False, True):
             scanner = PCRTimeScanner()
-            for minute in range(6):
-                result = self.update(scanner, minute, put_oi=700 if minute == 5 else 100,
-                                     spot=26000 if moved and minute == 2 else 25000)
+            for minute in range(301):
+                result = self.update(scanner, minute, put_oi=700 if minute == 300 else 100,
+                                     spot=26000 if moved and minute == 120 else 25000)
             self.assertEqual(result['positioning_stress_alert'], not moved)
 
     def test_clock_only_growth_does_not_become_positioning_alert(self):
         scanner = PCRTimeScanner()
-        for minute in range(6):
+        for minute in range(301):
             result = self.update(scanner, minute, expiry=400)
         self.assertTrue(result['raw_stress_alert'])
         self.assertFalse(result['positioning_stress_alert'])
@@ -55,7 +55,7 @@ class TestPCRTime(unittest.TestCase):
         self.assertEqual(self.update(scanner, 0, put_oi=0)['pcr'], 0)
         self.assertEqual(self.update(scanner, 0)['reason'], 'non_increasing_timestamp')
         self.assertIsNone(self.update(scanner, 3)['pcr_d1_per_minute'])
-        floor = self.update(scanner, 4, expiry=250)
+        floor = self.update(scanner, 4, expiry=14)
         self.assertTrue(floor['time_floor_active'])
         self.assertTrue(math.isfinite(floor['pcr_over_t3']))
         self.assertFalse(floor['raw_stress_alert'])
@@ -66,7 +66,7 @@ class TestPCRTime(unittest.TestCase):
         scanner = PCRTimeScanner()
         for minute in range(1000):
             self.update(scanner, minute)
-        self.assertLessEqual(len(next(iter(scanner.history.values()))), 9)
+        self.assertLessEqual(len(next(iter(scanner.history.values()))), 304)
 
     def test_cross_strike_spacing_and_missing_pairs(self):
         rows = [dict(strike=k, pcr_over_t3=k * 2) for k in (100, 120, 200)]

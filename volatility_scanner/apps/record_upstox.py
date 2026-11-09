@@ -50,6 +50,15 @@ class UpstoxRecorder(Recorder):
         self.modes = {}
         self.record_ticks = True
         self.algorithm_feed = None
+        self.analytics_dirty = set()
+        self.analytics_generation = 0
+        self.algorithm_consumer = None
+
+    def set_connected(self, connected):
+        self.connected = connected
+        self.analytics_generation += 1
+        self.received.clear()
+        self.index_received = None
 
     def enqueue(self, bucket, source, payload):
         if source != 'websocket' or self.record_ticks:
@@ -62,6 +71,7 @@ class UpstoxRecorder(Recorder):
             self.latest.pop(key, None)
             self.received.pop(key, None)
         self.contracts = {row['symbol']: row for row in contracts}
+        self.analytics_dirty.intersection_update(self.contracts)
         if self.algorithm_feed is not None:
             self.algorithm_feed.configure(self.contracts)
         for row in contracts:
@@ -97,8 +107,14 @@ class UpstoxRecorder(Recorder):
                 self.enqueue('NIFTY50', 'websocket', fields)
             elif key in self.symbols:
                 fields['symbol'] = key
+                previous = self.latest.get(key, {})
+                now = time.time()
+                received = self.received.get(key)
+                if (previous.get('oi') != fields.get('oi') or previous.get('iv') != fields.get('iv')
+                        or received is None or now - received > 15):
+                    self.analytics_dirty.add(key)
                 self.latest[key] = fields
-                self.received[key] = time.time()
+                self.received[key] = now
                 super().dispatch(fields)
             elif key in self.context:
                 fields['symbol'] = key
@@ -176,14 +192,14 @@ async def run(args):
             if recorder.algorithm_feed is not None:
                 recorder.loop.call_soon_threadsafe(recorder.algorithm_feed.connection, True, time.time())
             else:
-                recorder.loop.call_soon_threadsafe(setattr, recorder, 'connected', True)
+                recorder.loop.call_soon_threadsafe(recorder.set_connected, True)
             log.info('Upstox connected; mode counts %s', {mode: len(keys) for mode, keys in plan.items()})
 
         def disconnected(*_):
             if recorder.algorithm_feed is not None:
                 recorder.loop.call_soon_threadsafe(recorder.algorithm_feed.connection, False, time.time())
             else:
-                recorder.loop.call_soon_threadsafe(setattr, recorder, 'connected', False)
+                recorder.loop.call_soon_threadsafe(recorder.set_connected, False)
             log.warning('Upstox stream unavailable; samples marked stale')
 
         def message(data):
@@ -259,6 +275,8 @@ async def run(args):
                 status['coverage'] = {mode: len(keys) for mode, keys in plan.items()}
                 if recorder.algorithm_feed is not None:
                     status['algorithm_stream'] = recorder.algorithm_feed.health()
+                if recorder.algorithm_consumer is not None:
+                    status['algorithm_consumer'] = recorder.algorithm_consumer.health()
                 temporary = Path(args.output) / 'health.tmp.json'
                 temporary.write_text(json.dumps(status))
                 os.replace(temporary, Path(args.output) / 'health.json')
