@@ -37,8 +37,9 @@ class TestStreamAnalytics(unittest.IsolatedAsyncioTestCase):
         self.recorder.connected = True
         for row in self.rows:
             self.recorder.dispatch({'feeds': {row['symbol']: {'fullFeed': {'marketFF': {
-                'ltpc': {'ltp': 100}, 'oi': 100 if row['option_type'] == 'CE' else 200, 'iv': 20}}}}})
+                'ltpc': {'ltp': 100,'ltt':str(int(now*1000))}, 'oi': 100 if row['option_type'] == 'CE' else 200, 'iv': 20}}}}})
             self.recorder.received[row['symbol']] = now
+            self.recorder.price_received[row['symbol']] = now
         self.recorder.dispatch({'feeds': {'NSE_INDEX|Nifty 50': {'fullFeed': {'indexFF': {'ltpc': {'ltp': 25050}}}}}})
         self.recorder.index_received = now
         return now
@@ -58,6 +59,15 @@ class TestStreamAnalytics(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(first) + len(second), 6)
         self.assertEqual(second[-1]['data']['pcr'], 2)
         self.assertTrue(second[-1]['data']['window_ready'])
+        bucket=self.recorder.symbols[self.rows[0]['symbol']][0]
+        premiums=read_algorithm_events(path,bucket=bucket,source='premium_minute')
+        self.assertEqual(len(premiums),12)
+        self.assertTrue(premiums[-1]['data']['comparison_ready'])
+        self.assertTrue(premiums[-1]['data']['complete'])
+        self.assertIsNotNone(premiums[-1]['data']['observed_change'])
+        premium_plan=self.recorder.db.execute("EXPLAIN QUERY PLAN SELECT id FROM events WHERE source='premium_minute' AND bucket=? AND source=? AND id>? ORDER BY id LIMIT ?",
+            (bucket,'premium_minute',0,10)).fetchall()
+        self.assertIn('premium_lookup',str(premium_plan))
         exposures = read_algorithm_events(path, bucket='2026-12-03_EXPOSURE', source='exposure_minute')
         self.assertTrue(exposures[-1]['data']['complete'])
         plan = self.recorder.db.execute("""EXPLAIN QUERY PLAN SELECT id FROM events
@@ -101,3 +111,22 @@ class TestStreamAnalytics(unittest.IsolatedAsyncioTestCase):
         results = list(self.scanner.calculate(self.recorder, now))
         self.assertTrue(next(e[2] for e in results if e[0] == '2026-12-03_PCR_TIME')['valid'])
         self.assertFalse(next(e[2] for e in results if e[0] == '2026-12-03_EXPOSURE')['complete'])
+        premium=[e[2] for e in results if e[1]=='premium_minute']
+        self.assertFalse(next(p for p in premium if p['symbol']==self.rows[0]['symbol'])['complete'])
+        self.assertTrue(next(p for p in premium if p['symbol']==self.rows[1]['symbol'])['complete'])
+
+    async def test_stale_trade_price_withholds_observed_residual_only(self):
+        now=self.ticks(0)
+        self.recorder.price_received=dict.fromkeys(self.recorder.contracts,now-16)
+        first=list(self.scanner.calculate(self.recorder,now))
+        for event in first:
+            if event[1]=='premium_minute':
+                self.assertTrue(event[2]['complete'])
+                self.assertIsNone(event[2]['premium'])
+        self.ticks(1/60)
+        self.recorder.price_received=dict.fromkeys(self.recorder.contracts,now-16)
+        second=list(self.scanner.calculate(self.recorder,now+1))
+        for event in second:
+            if event[1]=='premium_minute':
+                self.assertTrue(event[2]['comparison_ready'])
+                self.assertIsNone(event[2]['observed_change'])

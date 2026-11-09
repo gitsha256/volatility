@@ -3,9 +3,11 @@ import json
 from pathlib import Path
 import sqlite3
 
-SOURCES = {'pcr_time_minute', 'exposure_minute'}
+SOURCES = {'pcr_time_minute', 'exposure_minute','premium_minute'}
 INDEX_SQL = """CREATE INDEX IF NOT EXISTS algorithm_lookup ON events(bucket,source,id)
 WHERE source IN ('pcr_time_minute','exposure_minute')"""
+PREMIUM_INDEX_SQL = """CREATE INDEX IF NOT EXISTS premium_lookup ON events(bucket,source,id)
+WHERE source='premium_minute'"""
 
 
 def read_algorithm_events(database, *, bucket, source, after_id=0, limit=1000):
@@ -15,8 +17,9 @@ def read_algorithm_events(database, *, bucket, source, after_id=0, limit=1000):
         raise ValueError('Nonnegative cursor and limit between 1 and 10000 required')
     connection = sqlite3.connect(Path(database).resolve().as_uri() + '?mode=ro', uri=True)
     try:
-        rows = connection.execute("""SELECT id,received_at,payload FROM events
-            WHERE source IN ('pcr_time_minute','exposure_minute')
+        predicate = "source='premium_minute'" if source=='premium_minute' else "source IN ('pcr_time_minute','exposure_minute')"
+        rows = connection.execute(f"""SELECT id,received_at,payload FROM events
+            WHERE {predicate}
             AND bucket=? AND source=? AND id>? ORDER BY id LIMIT ?""",
             (bucket, source, after_id, limit))
         return [dict(id=identifier, received_at=received, data=json.loads(payload))

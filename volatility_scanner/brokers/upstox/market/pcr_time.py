@@ -3,19 +3,25 @@ import asyncio
 import heapq
 import time
 
-from volatility_scanner.analytics.pcr_time import PCRTimeScanner, finite, strike_slopes, YEAR_SECONDS
-from volatility_scanner.analytics.exposure import exposure_profile
+from volatility_scanner.analytics.pcr_time import PCRTimeScanner, finite, strike_slopes, localize_stress, max_pain_strike, YEAR_SECONDS
+from volatility_scanner.analytics.exposure import exposure_profile, spot_greeks
+from volatility_scanner.analytics.premium import PremiumTracker
 from .coverage import expiry_epoch
 
 
 class StreamingAnalytics:
-    def __init__(self, *, pcr=True, exposure=False, iv_unit='percent', oi_multiplier=1.0):
+    def __init__(self, *, pcr=True, exposure=False, iv_unit='percent', oi_multiplier=1.0,
+                 drift_seconds=3600, rate=0.0, dividend=0.0):
         if iv_unit not in ('percent', 'decimal') or not finite(oi_multiplier) or oi_multiplier <= 0:
             raise ValueError('Explicit IV unit and positive OI multiplier required')
         self.pcr, self.exposure = pcr, exposure
         self.iv_scale = .01 if iv_unit == 'percent' else 1.0
         self.oi_multiplier = oi_multiplier
+        if not all(finite(v) for v in (drift_seconds,rate,dividend)) or drift_seconds <= 0:
+            raise ValueError('Finite rates and a positive scenario horizon required')
+        self.drift_seconds, self.rate, self.dividend = drift_seconds,rate,dividend
         self.scanner = PCRTimeScanner()
+        self.premiums = PremiumTracker(self.scanner.config.max_gap_seconds)
         self._contracts = None
         self.groups = {}
         self.signatures = {}
@@ -44,7 +50,7 @@ class StreamingAnalytics:
             option = total['options'].get(key)
             if option is None or option['oi'] != oi or option['sigma'] != iv * self.iv_scale:
                 total['options'][key] = dict(strike=strike, oi=oi, sigma=iv*self.iv_scale,
-                                             option_type=row['option_type'])
+                                             option_type=row['option_type'],symbol=key)
         else:
             total['options'].pop(key, None)
         self.cached[key] = good, oi, iv, received
@@ -70,6 +76,10 @@ class StreamingAnalytics:
             if generation != self.generation:
                 self.scanner.history.clear()
                 self.exposure_previous.clear()
+                self.premiums.previous.clear()
+            for symbol in list(self.premiums.previous):
+                if symbol not in recorder.contracts or recorder.contracts[symbol]['expiry_date'] in changed:
+                    del self.premiums.previous[symbol]
             self.groups, self.signatures, self._contracts = groups, signatures, recorder.contracts
             self.generation = generation
             self.locations, self.cached, self.strike_cache, self.expiry_cache = {}, {}, {}, {}
@@ -119,19 +129,27 @@ class StreamingAnalytics:
                                   call_oi=counts[0], put_oi=counts[1])
                     samples.append(result)
             expected = sum(map(len, strikes.values()))
+            pcr_context = None
             if self.pcr:
                 strike_slopes(samples)
-                for result in samples:
-                    contract = strikes[result['strike']][0]
-                    bucket = recorder.symbols[contract['symbol']][0]
-                    yield bucket, 'pcr_time_minute', result
                 result = self.scanner.update((expiry, None), timestamp=timestamp, expiry=end,
                     call_oi=totals[0], put_oi=totals[1], spot=spot, valid=complete)
                 result.update(expiry=expiry, scope='selected_expiry_contracts', contracts_expected=expected,
                               call_oi=totals[0], put_oi=totals[1], connected=recorder.connected)
+                result['max_pain'] = max_pain_strike({strike:self.strike_cache[expiry,strike]['counts']
+                    for strike in strikes}) if complete and timestamp<end else None
+                result['distance_to_max_pain'] = spot-result['max_pain'] if result['max_pain'] is not None else None
+                pcr_context = {key:result.get(key) for key in ('pcr','pcr_over_t3','stress_rate_growth_fraction',
+                    'positioning_derivative_alert','max_pain','distance_to_max_pain')}
+                localize_stress(samples, result, spot)
+                for sample in samples:
+                    contract = strikes[sample['strike']][0]
+                    yield recorder.symbols[contract['symbol']][0], 'pcr_time_minute', sample
                 yield expiry + '_PCR_TIME', 'pcr_time_minute', result
             if self.exposure:
+                models = {}
                 status = dict(sample_epoch=timestamp, expiry=expiry, complete=False,
+                              pcr_context=pcr_context,
                               contracts_expected=expected, contracts_with_oi_iv=len(options),
                               reason=('expired' if timestamp >= end else
                                       'missing_or_invalid_iv' if complete and len(options) != expected else
@@ -139,7 +157,9 @@ class StreamingAnalytics:
                 if complete and len(options) == expected and timestamp < end:
                     try:
                         profile = exposure_profile(options, spot=spot, years=(end - timestamp) / YEAR_SECONDS,
-                                                   oi_multiplier=self.oi_multiplier)
+                            oi_multiplier=self.oi_multiplier,include_contracts=True,drift_seconds=self.drift_seconds,
+                            rate=self.rate,dividend=self.dividend)
+                        models = {row['symbol']:row['greeks'] for row in profile['contracts']}
                         def all_finite(value):
                             if isinstance(value, dict):
                                 return all(all_finite(v) for v in value.values())
@@ -148,14 +168,26 @@ class StreamingAnalytics:
                             return not isinstance(value, (int, float)) or isinstance(value, bool) or finite(value)
                         if not all_finite(profile):
                             raise ValueError('Nonfinite exposure')
-                        status.update({k: v for k, v in profile.items() if k != 'strikes'})
+                        status.update({k: v for k, v in profile.items() if k not in ('strikes','contracts')})
                         status.update(complete=True, reason=None, iv_unit='percent' if self.iv_scale == .01 else 'decimal')
                         previous = self.exposure_previous.get(expiry)
                         status['net_gamma_dollar_change_per_minute'] = None
                         if previous and 0 < timestamp - previous[0] <= self.scanner.config.max_gap_seconds:
                             status['net_gamma_dollar_change_per_minute'] = (
                                 profile['net_gamma_dollar_1pct'] - previous[1]) * 60 / (timestamp - previous[0])
-                        self.exposure_previous[expiry] = (timestamp, profile['net_gamma_dollar_1pct'])
+                            status['net_vanna_dollar_change_per_minute'] = (
+                                profile['net_vanna_dollar_1iv_point']-previous[2])*60/(timestamp-previous[0])
+                            status['gamma_regime_changed'] = previous[3] != profile['gamma_regime']
+                            status['crossed_previous_gamma_flip'] = previous[5] is not None and (previous[4]-previous[5])*(spot-previous[5])<0
+                        else:
+                            status['net_vanna_dollar_change_per_minute'] = None
+                            status['gamma_regime_changed'] = False
+                            status['crossed_previous_gamma_flip'] = False
+                        status['distance_to_call_wall'] = profile['call_wall']-spot if profile['call_wall'] is not None else None
+                        status['distance_to_put_wall'] = spot-profile['put_wall'] if profile['put_wall'] is not None else None
+                        status['distance_to_gamma_flip'] = profile['nearest_gamma_flip']-spot if profile['nearest_gamma_flip'] is not None else None
+                        self.exposure_previous[expiry] = (timestamp, profile['net_gamma_dollar_1pct'],
+                                                          profile['net_vanna_dollar_1iv_point'],profile['gamma_regime'],spot,profile['nearest_gamma_flip'])
                         for row in profile['strikes']:
                             contract = strikes[row['strike']][0]
                             yield recorder.symbols[contract['symbol']][0], 'exposure_minute', dict(
@@ -165,6 +197,31 @@ class StreamingAnalytics:
                 if not status['complete']:
                     self.exposure_previous.pop(expiry, None)
                 yield expiry + '_EXPOSURE', 'exposure_minute', status
+                for rows in strikes.values():
+                    for contract in rows:
+                        key=contract['symbol']
+                        option=aggregate['options'].get(key)
+                        observation=dict(symbol=key,expiry=expiry,sample_epoch=timestamp,
+                            option_type=contract['option_type'],strike=contract['strike_price'],complete=False,
+                            reason='expired' if timestamp>=end else 'missing_or_stale_oi_iv_spot')
+                        if option and spot_valid and timestamp<end:
+                            try:
+                                greeks=models.get(key) or spot_greeks(spot,option['strike'],option['sigma'],
+                                    (end-timestamp)/YEAR_SECONDS,option['option_type'],self.rate,self.dividend)
+                                if not all(finite(v) for v in greeks.values()):
+                                    raise ValueError('Nonfinite contract model')
+                                fields=recorder.latest.get(key,{})
+                                price=fields.get('ltp',fields.get('ltpc.ltp'))
+                                price_epoch=getattr(recorder,'price_received',{}).get(key)
+                                premium=price if (finite(price) and price>0 and fresh(price_epoch)
+                                    and fresh(fields.get('trade_epoch'))) else None
+                                observation.update(self.premiums.observe(symbol=key,timestamp=timestamp,expiry=end,
+                                    spot=spot,sigma=option['sigma'],greeks=greeks,premium=premium),reason=None)
+                            except (ValueError,ArithmeticError):
+                                observation['reason']='invalid_model_inputs_or_numeric_range'
+                        if not observation['complete']:
+                            self.premiums.previous.pop(key,None)
+                        yield recorder.symbols[key][0], 'premium_minute', observation
 
     def consume(self, recorder, timestamp):
         started = time.perf_counter_ns()
@@ -173,6 +230,7 @@ class StreamingAnalytics:
             if timestamp <= self.latest_epoch:
                 self.scanner.history.clear()
                 self.exposure_previous.clear()
+                self.premiums.previous.clear()
         self.latest_output = tuple(self.calculate(recorder, timestamp))
         self.latest_epoch = timestamp
         self.calculation_ms = (time.perf_counter_ns() - started) / 1e6

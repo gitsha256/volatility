@@ -125,8 +125,26 @@ Uneven-strike neighbour secants give the spatial slope of the cubic score.
 Missing/undefined neighbours are not bridged. These derivatives are descriptive
 and can be noisy; neither their direction nor a stress alert is a trade signal.
 Configuration thresholds live in `PCRTimeConfig`; defaults are experimental.
-The document's inconsistent year/hour regime thresholds are intentionally not
-used to classify market conditions.
+`document_t2_band` and `document_t3_band` expose the source's literal **year-based**
+thresholds, including `unspecified` for its gaps. They are source annotations,
+not classifications of actual market conditions: 0.05 ACT/365 years is 18.25
+days, not the "final hours" claimed in the text.
+
+The source's literal derivative rule is also available: compare the current
+observed `d(PCR/t³)/dt` with its positive baseline five minutes earlier.
+`derivative_stress_alert` requires growth strictly above 500%, flat spot over
+the entire window, and no expiry floor. `positioning_derivative_alert` adds the
+PCR growth gate. The first sample has no derivative, so this comparison needs
+at least 301 elapsed seconds at a one-second cadence. Zero or negative derivative
+baselines do not define the requested positive percentage-growth test.
+
+Each strike has call/put OI growth, its current OTM side and PCR growth relative
+to the expiry aggregate. `localized_otm_put_alert` requires an OTM put strike,
+a positioning derivative alert, increasing put OI and growth exceeding the
+aggregate. It is an experimental localization diagnostic, not proof of an
+institutional trade. Max pain is calculated from the same current OI totals
+using a sorted payout sweep and withheld for zero/incomplete books. Its distance
+from spot is reported without claiming a pin or breakout.
 
 ## Greek exposure scenario
 
@@ -136,7 +154,9 @@ never by guessing from magnitude. Use the Black-Scholes spot model with zero
 interest/dividend rates for the stream adapter. The callable model supports
 explicit rates. This is separate from the existing Black-76 pricing engine.
 
-Compute Gamma, Vanna, calendar Charm, Speed and Volga. Gamma/Vanna/Charm are
+Compute Delta, Vega, calendar Theta, Gamma, Vanna, calendar Charm, Speed, Volga,
+Color, Ultima, calendar Vega decay and second calendar-time price sensitivity.
+Gamma/Vanna/Charm are
 OI-weighted with the document's **assumed** call-positive / put-negative signs.
 Long calls and long puts both have positive Gamma; subtracting puts is an
 inventory scenario, not information obtainable from OI. IV surface dynamics,
@@ -144,6 +164,10 @@ actual dealer positions and hedge transactions are not observed.
 Per-strike outputs also include signed Delta, Speed and Volga. Valid successive
 expiry profiles include observed dollar-Gamma change per minute; gaps or changed
 contract membership reset that comparison.
+The aggregate also includes dollar-Vanna changes, computed Gamma sign, sign
+transitions, crossing of the previous flip level, wall/flip distances and a
+21-point Gamma curve suitable for plotting. Current PCR/max-pain context is
+attached to the expiry exposure result.
 
 - Dollar Gamma per 1% spot move: `signed_OI * gamma * S² * 0.01`.
 - Dollar Vanna per one IV percentage point: `signed_OI * vanna * S * 0.01`.
@@ -160,13 +184,57 @@ contract membership reset that comparison.
 
 Partial/missing IV or stale quotes withhold the expiry exposure profile, while
 valid PCR calculations may continue. No stale prior profile is republished.
+Valid individual contracts still produce models when other legs are incomplete.
+
+## Premium pushforward and scenarios
+
+The new `premium_minute` source supplies one typed contract record per selected
+leg, in its existing expiry/strike bucket. Each valid record contains model
+price, Greeks, Jacobian and symmetric Hessian, with axes explicitly ordered as
+`[spot, decimal IV, elapsed calendar years]`. For consecutive valid observations:
+
+`dV ≈ delta*dS + vega*dIV + theta*dt`
+
+`+ gamma*dS²/2 + vanna*dS*dIV + volga*dIV²/2`
+
+`+ charm*dS*dt + veta*dIV*dt + theta2*dt²/2`.
+
+All coefficients come from the previous observation. Output separates every
+term, first/second-order totals, exact model repricing change, Taylor truncation
+error, observed premium change and observed-minus-predicted residual. Missing,
+stale or unavailable inputs never become zeros. Consecutive comparison resets
+on gaps over 2.5 seconds, expiry, reconnect or changed membership. Observed LTP
+comparisons additionally require recent receipt **and recent exchange LTT**;
+old trades replayed in a fresh snapshot do not establish a fresh observation.
+Residuals are not identified institutional order flow.
+
+For complete expiry profiles, scenarios compute exact modeled delta changes
+under +1 and -1 IV percentage point shocks, and flat spot/IV time decay over a
+configured calendar horizon. Hypothetical hedge changes have the opposite sign
+to the modeled inventory delta change. These use the explicit call+/put- sign
+assumption, not an observed dealer position. Invalid shifted IV or a horizon
+reaching expiry yields null with a reason. Configure model assumptions with:
+
+```powershell
+python stream_option_chain.py --exposure-rate 0.05 --exposure-dividend 0.01 --exposure-drift-minutes 60
+```
+
+For a three-calendar-day flat-state scenario, use `--exposure-drift-minutes 4320`.
+It is a counterfactual time-decay projection, not a forecast of Monday's open.
+Defaults remain zero interest/dividend and a one-hour horizon.
+
+Model references: [OpenGamma's Black-Scholes Greek repository](https://strata.opengamma.io/apidocs/com/opengamma/strata/pricer/impl/option/BlackScholesFormulaRepository.html).
+Analytic derivatives are independently checked by central finite differences;
+the calendar-time sign convention is explicit throughout.
 
 ## Storage and retrieval
 
 No new database, service or dependency. The existing per-strike queues feed one
 batched WAL SQLite writer with FULL synchronization. Minute strike results share
 their existing expiry/strike bucket; aggregate buckets are `YYYY-MM-DD_PCR_TIME`
-and `YYYY-MM-DD_EXPOSURE`. Sources are `pcr_time_minute` and `exposure_minute`.
+and `YYYY-MM-DD_EXPOSURE`. Sources are `pcr_time_minute`, `exposure_minute` and
+`premium_minute`. A separate partial `(bucket,source,id)` index serves premium
+rows, preserving the existing index for PCR/exposure rows.
 Existing hourly Excel export picks up the new fields automatically.
 
 Contract/strike lookup is dictionary-based. Groups rebuild only when the
@@ -188,6 +256,7 @@ page = read_algorithm_events(
     after_id=0, limit=1000,
 )
 # Next page: after_id=page[-1]['id']; bounded read-only access, no OFFSET scans.
+# Use source='premium_minute' with an expiry/strike bucket for contract tensors.
 ```
 
 Tests cover mathematics, finite differences, five-minute windows, clock-only
@@ -211,3 +280,26 @@ an in-memory queue handoff, not SQLite/Excel commit or end-to-end latency.
 Nonlinear Greeks and the gamma-flip landscape revalue each second: unchanged OI
 does not imply unchanged exposure when spot or time changes. No stale Greek
 result is substituted solely to improve benchmark numbers.
+
+## Document coverage and limits
+
+| Source component | Implementation |
+|---|---|
+| Price Jacobian / second-order tensor mapping | Per-contract Jacobian, full Hessian, observed/model change decomposition |
+| Net Gamma / Vanna landscapes | Per-strike and expiry OI-weighted scenarios, curves and IV-shock projections |
+| Gamma flip / call-put walls | Bounded aggregate root search, walls, distances and transitions |
+| Charm / Color time effects | Analytic Greeks, per-day exposure, exact flat-state horizon scenario |
+| PCR/time, time², time³ | Separate weighted scores and actual empirical derivatives |
+| Five-minute derivative spike / flat spot | Explicit raw and positioning-filtered conditions, bounded rolling history |
+| Cross-strike / OTM concentration | Spatial secants, relative growth and localized OTM-put diagnostic |
+| Speed / Ultima | Analytic and signed exposure fields alongside PCR context |
+| Time bands | Literal year-threshold annotations; contradictory prose not treated as fact |
+| Persistence / retrieval | Ready second-by-second state, minute publications, indexed source/bucket cursors and Excel export |
+
+The source provides no executable entry/exit, position-sizing, stop-loss or
+capital-allocation rules. No automated orders are generated. Public OI cannot
+identify dealer books or institutional trade intent; feed snapshots do not
+supply that missing information. Claims of guaranteed pre-tape prediction,
+liquidity crisis detection or a physical volatility singularity are not
+implemented as facts. Performance/profitability validation requires separate
+market-hours replay and out-of-sample testing.

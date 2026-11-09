@@ -6,6 +6,7 @@ from datetime import datetime
 
 from volatility_scanner.security.tokens import AuthError
 from volatility_scanner.storage.journal import IST
+from volatility_scanner.analytics.pcr_time import max_pain_strike
 
 INDEX = 'NSE_INDEX|Nifty 50'
 VIX = 'NSE_INDEX|India VIX'
@@ -134,18 +135,7 @@ def local_summary(contracts, latest):
     call_oi = sum(v[0] for v in strikes.values())
     put_oi = sum(v[1] for v in strikes.values())
     complete = seen == len(contracts)
-    best, best_payout = None, float('inf')
-    left_calls = left_call_value = right_puts = right_put_value = 0
-    right_puts = put_oi
-    right_put_value = sum(k * v[1] for k, v in strikes.items())
-    for strike, (calls, puts) in sorted(strikes.items()):
-        right_puts -= puts
-        right_put_value -= strike * puts
-        payout = strike * left_calls - left_call_value + right_put_value - strike * right_puts
-        if payout < best_payout:
-            best, best_payout = strike, payout
-        left_calls += calls
-        left_call_value += strike * calls
+    best = max_pain_strike(strikes) if complete else None
     return dict(call_oi=call_oi, put_oi=put_oi, contracts_seen=seen,
                 contracts_expected=len(contracts), complete=complete,
                 pcr=put_oi / call_oi if complete and call_oi else None,

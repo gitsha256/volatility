@@ -39,6 +39,8 @@ class OptionChainFeed:
         self.recorder.connected = connected
         self.recorder.analytics_generation = getattr(self.recorder, 'analytics_generation', 0) + 1
         self.recorder.received.clear()
+        if hasattr(self.recorder,'price_received'):
+            self.recorder.price_received.clear()
         self.recorder.index_received = None
 
     def submit(self, frame, received_at, stamp):
@@ -70,8 +72,10 @@ class OptionChainFeed:
                 fields['_stamp'] = stamp
                 if kind == 'ltpc':
                     price = data.ltp
+                    trade_time = data.ltt
                 else:
                     price = data.ltpc.ltp if data.HasField('ltpc') else None
+                    trade_time = data.ltpc.ltt if data.HasField('ltpc') else 0
                     if key != INDEX and (kind == 'firstLevelWithGreeks' or full_kind == 'marketFF'):
                         # Protobuf scalar defaults include legitimate zero OI/IV.
                         # LTPC-only messages must not refresh the OI receipt age.
@@ -79,7 +83,8 @@ class OptionChainFeed:
                                       iv=data.iv if math.isfinite(data.iv) and data.iv >= 0 else None,
                                       _oi_received=received)
                 if price is not None and math.isfinite(price) and price > 0:
-                    fields.update(ltp=price, _price_received=received)
+                    fields.update(ltp=price, _price_received=received,
+                                  trade_epoch=trade_time/1000 if trade_time>0 else None)
             if self.pending and not self.scheduled:
                 self.scheduled = True
                 schedule = True
@@ -111,6 +116,8 @@ class OptionChainFeed:
                     previous.update(fields)
                     if oi_received is not None:
                         self.recorder.received[key] = oi_received
+                    if price_received is not None and hasattr(self.recorder,'price_received'):
+                        self.recorder.price_received[key] = price_received
                 self.receive_to_cache_ms = (time.perf_counter_ns() - stamp) / 1e6
             self.handoffs += bool(pending)
         except Exception as error:

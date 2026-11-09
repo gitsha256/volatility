@@ -689,3 +689,9 @@ Streams selected option OI/IV and NIFTY spot into bounded in-memory state;
 maintains sliding results every second and persists a ready batch every 60 seconds.
 Use `record_upstox.py` when every received raw/tick
 update must also be recorded.
+
+The document's remaining modeled analytics include per-contract Jacobian/Hessian
+premium decomposition, Color/Ultima, Charm/IV scenarios, Gamma curves/transitions,
+and localized OTM/derivative-spike diagnostics. Contract results are retrievable
+with `source='premium_minute'`. See the design's coverage and limitations table;
+these analytics do not submit orders.

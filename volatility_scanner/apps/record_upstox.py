@@ -45,6 +45,7 @@ class UpstoxRecorder(Recorder):
         super().__init__(directory)
         self.latest = {}
         self.received = {}
+        self.price_received = {}
         self.context = {}
         self.contracts = {}
         self.modes = {}
@@ -58,6 +59,7 @@ class UpstoxRecorder(Recorder):
         self.connected = connected
         self.analytics_generation += 1
         self.received.clear()
+        self.price_received.clear()
         self.index_received = None
 
     def enqueue(self, bucket, source, payload):
@@ -70,6 +72,7 @@ class UpstoxRecorder(Recorder):
             self.symbols.pop(key, None)
             self.latest.pop(key, None)
             self.received.pop(key, None)
+            self.price_received.pop(key, None)
         self.contracts = {row['symbol']: row for row in contracts}
         self.analytics_dirty.intersection_update(self.contracts)
         if self.algorithm_feed is not None:
@@ -115,6 +118,14 @@ class UpstoxRecorder(Recorder):
                     self.analytics_dirty.add(key)
                 self.latest[key] = fields
                 self.received[key] = now
+                price = fields.get('ltpc.ltp')
+                if type(price) in (int,float) and math.isfinite(price) and price > 0:
+                    self.price_received[key] = now
+                    try:
+                        trade_time=float(fields.get('ltpc.ltt',0))/1000
+                    except (ValueError,TypeError):
+                        trade_time=0
+                    fields['trade_epoch']=trade_time if math.isfinite(trade_time) and trade_time>0 else None
                 super().dispatch(fields)
             elif key in self.context:
                 fields['symbol'] = key
@@ -223,7 +234,9 @@ async def run(args):
                 samplers.append(asyncio.create_task(stream_analytics(recorder,
                     pcr='pcr-time' in enabled, exposure='exposure' in enabled,
                     iv_unit=getattr(args, 'exposure_iv_unit', 'percent'),
-                    oi_multiplier=getattr(args, 'exposure_oi_multiplier', 1.0))))
+                    oi_multiplier=getattr(args, 'exposure_oi_multiplier', 1.0),
+                    drift_seconds=getattr(args,'exposure_drift_minutes',60)*60,
+                    rate=getattr(args,'exposure_rate',0.0),dividend=getattr(args,'exposure_dividend',0.0))))
             if enabled - {'local', 'pcr-time', 'exposure'}:
                 samplers.append(asyncio.create_task(supplements(rest, recorder, enabled)))
         refresh_at = time.monotonic() + 300
@@ -353,6 +366,10 @@ def main(argv=None):
     parser.add_argument('--exposure-iv-unit', choices=('percent', 'decimal'), default='percent')
     parser.add_argument('--exposure-oi-multiplier', type=float, default=1.0,
                         help='Scale broker OI into underlying units; default uses OI as supplied')
+    parser.add_argument('--exposure-drift-minutes',type=float,default=60,
+                        help='Flat spot/IV Charm scenario horizon in calendar minutes')
+    parser.add_argument('--exposure-rate',type=float,default=0.0,help='Annual decimal model interest rate')
+    parser.add_argument('--exposure-dividend',type=float,default=0.0,help='Annual decimal dividend yield')
     parser.add_argument('--no-snapshots', action='store_true')
     parser.add_argument('--no-raw-frames', action='store_true')
     parser.add_argument('--no-ticks', action='store_true', help='Keep selected snapshots/raw frames without decoded tick rows')
@@ -373,6 +390,9 @@ def main(argv=None):
         parser.error('30-level depth requires --feed-mode full')
     if not math.isfinite(args.exposure_oi_multiplier) or args.exposure_oi_multiplier <= 0:
         parser.error('Exposure OI multiplier must be finite and positive')
+    if (not all(math.isfinite(v) for v in (args.exposure_drift_minutes,args.exposure_rate,args.exposure_dividend))
+            or args.exposure_drift_minutes<=0):
+        parser.error('Exposure scenario requires a positive finite horizon and finite rates')
     if set(filter(None, args.analytics.split(','))) - {'local', 'pcr-time', 'exposure', 'chain', 'oi', 'pcr', 'max-pain', 'fii', 'dii', 'calendar'}:
         parser.error('Unknown analytics source')
     if args.feed_mode == 'ltpc' and set(args.analytics.split(',')) & {'pcr-time', 'exposure'}:

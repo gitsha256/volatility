@@ -28,7 +28,7 @@ async def verify():
                              include_context=False, feed_mode='option_greeks')
         loop = asyncio.get_running_loop()
         state = SimpleNamespace(loop=loop, contracts={r['symbol']: r for r in contracts},
-            latest={}, received={}, index={}, index_received=None, connected=False,
+            latest={}, received={}, price_received={}, index={}, index_received=None, connected=False,
             symbols={r['symbol']: (f"{expiry_epoch(r['expiry_date'])}_{r['strike_price']:g}",r['option_type']) for r in contracts})
         feed = OptionChainFeed(state)
         config = upstox_client.Configuration()
@@ -54,11 +54,16 @@ async def verify():
             if len(state.received) == len(contracts) and state.index_received is not None:
                 break
             await asyncio.sleep(.1)
-        events = list(StreamingAnalytics(exposure=True).calculate(state, time.time()))
+        algorithm=StreamingAnalytics(exposure=True)
+        algorithm.consume(state,time.time())
+        await asyncio.sleep(1)
+        events=algorithm.consume(state,time.time())
         report.update(connected=state.connected, options_expected=len(contracts), options_received=len(state.received),
                       spot_received=state.index_received is not None, frames=streamer.frames_received,
                       options_with_positive_iv=sum(finite(v.get('iv')) and v['iv'] > 0 for v in state.latest.values()),
                       decoder_ok=streamer.decoder_failure is None, cache_ok=feed.failure is None,
+                      complete_contract_models=sum(source=='premium_minute' and value['complete'] for _,source,value in events),
+                      observed_premium_comparisons=sum(source=='premium_minute' and value.get('observed_change') is not None for _,source,value in events),
                       state_delivery=feed.health(), expiry_results=[dict(expiry=value['expiry'],valid=value['valid'],
                         reason=value['reason'],pcr=value['pcr']) for _,source,value in events
                         if source=='pcr_time_minute' and value['scope']=='selected_expiry_contracts'],

@@ -88,6 +88,7 @@ class PCRTimeScanner:
                       pcr=None, pcr_over_t=None, pcr_over_t2=None, pcr_over_t3=None,
                       pcr_d1_per_minute=None, pcr_d2_per_minute2=None, pcr_d3_per_minute3=None,
                       pcr_over_t3_change_per_minute=None,
+                      derivative_stress_alert=False, positioning_derivative_alert=False,
                       window_ready=False, raw_stress_alert=False, positioning_stress_alert=False)
         remaining = expiry - timestamp
         if remaining <= 0:
@@ -115,12 +116,19 @@ class PCRTimeScanner:
         if not all(math.isfinite(v) for v in (pcr, *scores)):
             self.history.pop(key, None)
             return dict(result, reason='numeric_overflow')
-        history.push((timestamp, pcr, spot, scores[2], effective_seconds), self.config.window_seconds)
+        rate = ((scores[2]-history[-1][3])*60/(timestamp-history[-1][0])) if history else None
+        history.push((timestamp, pcr, spot, scores[2], effective_seconds, call_oi, put_oi, rate), self.config.window_seconds)
         target = timestamp - self.config.window_seconds
         floored = remaining < self.config.min_expiry_seconds
         result.update(valid=True, reason=None, pcr=pcr, seconds_to_expiry=remaining,
                       time_years=t, time_floor_active=floored,
                       pcr_over_t=scores[0], pcr_over_t2=scores[1], pcr_over_t3=scores[2])
+        # Literal document thresholds in years, not its inconsistent hours/week prose.
+        raw_t = remaining / YEAR_SECONDS
+        result['document_t2_band'] = ('stabilized' if raw_t > .5 else
+            'convexity_breakout' if .1 <= raw_t <= .2 else 'hyper_kinetic' if raw_t < .05 else 'unspecified')
+        result['document_t3_band'] = ('latency' if raw_t > .15 else
+            'asymmetry' if .08 <= raw_t <= .12 else 'hedging_chaos' if raw_t < .03 else 'unspecified')
         if len(history) > 1:
             previous = history[-2]
             result['pcr_over_t3_change_per_minute'] = (scores[2] - previous[3]) * 60 / (timestamp - previous[0])
@@ -134,6 +142,12 @@ class PCRTimeScanner:
             result['spot_range_fraction'] = spot_range
             result['spot_flat'] = spot_range <= self.config.flat_spot_fraction
             result['time_only_growth_fraction'] = (baseline[4] / effective_seconds) ** 3 - 1
+            for name, current, initial in (('call_oi',call_oi,baseline[5]),('put_oi',put_oi,baseline[6])):
+                result[name+'_growth_fraction'] = current/initial-1 if initial > 0 else None
+            if rate is not None and baseline[7] is not None and baseline[7] > 0:
+                result['stress_rate_growth_fraction'] = rate/baseline[7]-1
+                result['derivative_stress_alert'] = (result['stress_rate_growth_fraction'] > self.config.spike_fraction
+                                                     and result['spot_flat'] and not floored)
             if baseline[1] > 0 and baseline[3] > 0:
                 growth = scores[2] / baseline[3] - 1
                 pcr_growth = pcr / baseline[1] - 1
@@ -142,6 +156,7 @@ class PCRTimeScanner:
                 result['raw_stress_alert'] = raw
                 # Require positioning growth as well as clock-driven amplification.
                 result['positioning_stress_alert'] = raw and pcr_growth > self.config.spike_fraction
+                result['positioning_derivative_alert'] = result['derivative_stress_alert'] and pcr_growth > self.config.spike_fraction
         return result
 
 
@@ -153,3 +168,34 @@ def strike_slopes(rows):
         values = (left.get('pcr_over_t3'), right.get('pcr_over_t3'), row.get('pcr_over_t3'))
         row['pcr_over_t3_strike_slope'] = ((values[1] - values[0]) / (right['strike'] - left['strike'])
             if all(finite(v) for v in values) and right['strike'] != left['strike'] else None)
+
+
+def localize_stress(rows, aggregate, spot):
+    for row in rows:
+        strike = row['strike']
+        row['otm_leg'] = ('CE' if strike > spot else 'PE' if strike < spot else None) if finite(spot) else None
+        growth, chain_growth = row.get('pcr_growth_fraction'), aggregate.get('pcr_growth_fraction')
+        relative = growth-chain_growth if finite(growth) and finite(chain_growth) else None
+        row['relative_pcr_growth_fraction'] = relative
+        row['localized_otm_put_alert'] = bool(row['valid'] and row['otm_leg']=='PE'
+            and row.get('positioning_derivative_alert') and finite(relative) and relative > 0
+            and finite(row.get('put_oi_growth_fraction')) and row['put_oi_growth_fraction'] > 0)
+
+
+def max_pain_strike(strikes):
+    """Linear payout sweep after sorting; counts are [call OI, put OI]."""
+    right_puts = sum(v[1] for v in strikes.values())
+    right_put_value = sum(k*v[1] for k,v in strikes.items())
+    if right_puts+sum(v[0] for v in strikes.values()) == 0:
+        return None
+    best, minimum = None, float('inf')
+    left_calls = left_call_value = 0
+    for strike,(calls,puts) in sorted(strikes.items()):
+        right_puts -= puts
+        right_put_value -= strike*puts
+        payout = strike*left_calls-left_call_value+right_put_value-strike*right_puts
+        if payout < minimum:
+            best, minimum = strike,payout
+        left_calls += calls
+        left_call_value += strike*calls
+    return best
