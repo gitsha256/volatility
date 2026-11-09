@@ -673,3 +673,8 @@ These bounded checks do not establish overnight stability, real expiry-day
 behavior, or completeness during a broker/network outage. Market streams cannot
 replay ticks missed while disconnected. Excel export and retention over multiple
 days still require a longer market-hours soak.
+# Streaming PCR/time algorithm
+
+Minute PCR/time and modeled Gamma/Vanna/Charm analytics are available from the
+WebSocket cache with `--analytics pcr-time,exposure`. See the
+[design, formulas, data quality rules, and retrieval API](docs/pcr-time-algorithm.md).

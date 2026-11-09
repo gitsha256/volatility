@@ -22,6 +22,7 @@ from volatility_scanner.storage.excel import export_directory
 from volatility_scanner.storage.lifecycle import capture_guard
 from volatility_scanner.brokers.upstox.api.market_rest import MarketREST
 from volatility_scanner.brokers.upstox.market.coverage import discover, coverage_plan, sync_subscriptions, supplements, expiry_epoch, local_analytics
+from volatility_scanner.brokers.upstox.market.pcr_time import stream_analytics
 
 UPSTOX_INDEX = 'NSE_INDEX|Nifty 50'
 log = logging.getLogger(__name__)
@@ -185,7 +186,12 @@ async def run(args):
             enabled = set(args.analytics.split(','))
             if 'local' in enabled:
                 samplers.append(asyncio.create_task(local_analytics(recorder)))
-            if enabled - {'local'}:
+            if enabled & {'pcr-time', 'exposure'}:
+                samplers.append(asyncio.create_task(stream_analytics(recorder,
+                    pcr='pcr-time' in enabled, exposure='exposure' in enabled,
+                    iv_unit=getattr(args, 'exposure_iv_unit', 'percent'),
+                    oi_multiplier=getattr(args, 'exposure_oi_multiplier', 1.0))))
+            if enabled - {'local', 'pcr-time', 'exposure'}:
                 samplers.append(asyncio.create_task(supplements(rest, recorder, enabled)))
         refresh_at = time.monotonic() + 300
         token_check_at = time.monotonic() + 30
@@ -301,7 +307,10 @@ if __name__ == '__main__':
     parser.add_argument('--feed-mode', choices=('full', 'option_greeks', 'ltpc'), default='full')
     parser.add_argument('--depth-contracts', type=int, choices=range(51), default=0, metavar='0..50')
     parser.add_argument('--context', action='store_true', help='Include India VIX and active NIFTY futures')
-    parser.add_argument('--analytics', default='', help='Comma-separated: local,chain,oi,pcr,max-pain,fii,dii,calendar')
+    parser.add_argument('--analytics', default='', help='Comma-separated: local,pcr-time,exposure,chain,oi,pcr,max-pain,fii,dii,calendar')
+    parser.add_argument('--exposure-iv-unit', choices=('percent', 'decimal'), default='percent')
+    parser.add_argument('--exposure-oi-multiplier', type=float, default=1.0,
+                        help='Scale broker OI into underlying units; default uses OI as supplied')
     parser.add_argument('--no-snapshots', action='store_true')
     parser.add_argument('--no-raw-frames', action='store_true')
     parser.add_argument('--no-ticks', action='store_true', help='Keep selected snapshots/raw frames without decoded tick rows')
@@ -312,8 +321,12 @@ if __name__ == '__main__':
         parser.error('Disk reserve cannot be negative')
     if args.feed_mode != 'full' and args.depth_contracts:
         parser.error('30-level depth requires --feed-mode full')
-    if set(filter(None, args.analytics.split(','))) - {'local', 'chain', 'oi', 'pcr', 'max-pain', 'fii', 'dii', 'calendar'}:
+    if not math.isfinite(args.exposure_oi_multiplier) or args.exposure_oi_multiplier <= 0:
+        parser.error('Exposure OI multiplier must be finite and positive')
+    if set(filter(None, args.analytics.split(','))) - {'local', 'pcr-time', 'exposure', 'chain', 'oi', 'pcr', 'max-pain', 'fii', 'dii', 'calendar'}:
         parser.error('Unknown analytics source')
+    if args.feed_mode == 'ltpc' and set(args.analytics.split(',')) & {'pcr-time', 'exposure'}:
+        parser.error('PCR/time and exposure require full or option_greeks feed data')
     if args.stop:
         Path(args.output, 'stop.request').touch()
         raise SystemExit(0)

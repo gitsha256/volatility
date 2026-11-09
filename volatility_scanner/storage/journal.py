@@ -32,6 +32,8 @@ class Recorder:
             id INTEGER PRIMARY KEY, day TEXT, bucket TEXT,
             received_at TEXT, source TEXT, payload TEXT)""")
         self.db.execute("CREATE INDEX IF NOT EXISTS event_bucket ON events(day, bucket, id)")
+        from .algorithm import INDEX_SQL
+        self.db.execute(INDEX_SQL)
         self.db.commit()
         self.loop = asyncio.get_running_loop()
         self.channels = {}
