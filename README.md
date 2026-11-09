@@ -246,3 +246,226 @@ The implementation follows the recommended architecture:
 ## Notes
 
 This is a research and execution-prep engine, not a ready-to-trade autotrader. The defaults are intentionally conservative and should be validated with historical backtests before live use.
+
+## WebSocket market recorder
+
+Run independently of the dashboard using the existing FYERS `.env` credentials:
+
+```powershell
+.venv/Scripts/python.exe record_market.py
+```
+
+Each expiry/strike has a dedicated in-memory asyncio channel and consumer (CE/PE
+share that strike's channel). Socket callbacks enqueue copies without disk I/O.
+Strike consumers forward updates to one shared writer, which batches across
+all strikes for up to 50 ms into the SQLite WAL journal. No ticks are intentionally dropped or deduplicated. Queues
+are unbounded: sustained overload grows memory, rather than discarding updates.
+A crash can lose queued/uncommitted updates. Ctrl+C drains queues and exports.
+
+Files appear under `recordings/YYYY-MM-DD/`:
+
+- `<expiry_epoch>_<strike>.xlsx`: every received option update, both legs,
+  receipt timestamp in IST, source, and all delivered fields.
+- `NIFTY50.xlsx`: latest spot-index fields sampled once per second, including
+  last receipt time and stale/disconnected flags. Empty price before first tick;
+  unchanged prices are repeated. This is a latest-value sample, not OHLC.
+- `recordings/capture.sqlite3`: persistent history retained across restarts.
+
+Excel refreshes every 60 seconds and on shutdown. Close workbooks to allow Windows
+to replace them. Failed replacements leave the journal and prior workbook intact.
+Large files split into sheets at Excel's row limit. Export reads the journal on
+another thread while capture continues. Restarting preserves and re-exports history.
+Use a separate output directory per recorder process.
+
+Recorder selects the current (first returned) expiry only: the 24 nearest
+strikes strictly below NIFTY spot and 24 strictly above, with both CE and PE.
+An exact spot-matching strike is excluded. Total: 96 options plus NIFTY 50,
+within the Standard plan's 100-instrument limit.
+Selection refreshes every 30 seconds; removed contracts are unsubscribed and new
+ones subscribed. Previously captured history is retained. REST refresh also saves
+OI/IV fields; intermediate changes in REST-only fields cannot be captured.
+WebSocket captures every delivered update for the selected contracts. Disconnected
+periods cannot be backfilled. Restart after token renewal.
+The running session uses `--output recordings/current_expiry` to separate it from
+previous full-chain snapshots.
+
+```powershell
+.venv/Scripts/python.exe record_market.py --output recordings --strikes 50 --chain-interval 30 --export-interval 60
+```
+
+## Upstox TOTP login
+
+Enable TOTP on your Upstox account and create an individual API app. Fill in
+`UPSTOX_API_KEY`, `UPSTOX_PIN` (six digits), and `UPSTOX_TOTP_SECRET` (Base32
+setup secret) in `.env`, then run:
+
+```powershell
+.venv/Scripts/python.exe authenticate_upstox.py
+```
+
+Uses the documented `/v2/totp-login/authorization/token` endpoint. Successful login
+atomically saves `UPSTOX_ACCESS_TOKEN`, preserving FYERS settings. Upstox revokes
+the app's previous access token when issuing a new one. Rejected login is not
+retried automatically. Tokens and credentials are never printed. The existing
+market recorder remains on FYERS; Upstox feed integration is a separate step.
+
+## Upstox live recording
+
+Capture is currently stopped. Start explicitly:
+
+```powershell
+.venv/Scripts/python.exe record_upstox.py
+```
+
+Default output: `D:/market-data/volatility/upstox`. The old workspace recordings
+were preserved at `D:/market-data/volatility/legacy-recordings`; the workspace
+`recordings` path is a junction to that archive. Existing daily Excel files are
+preserved but no longer refreshed by the hourly exporter.
+
+Uses the saved Upstox token; configured TOTP login handles a missing/expired JWT.
+For a rejected token, run `authenticate_upstox.py`, then restart. The V3 full-mode
+WebSocket subscribes to the selected NIFTY expiry scope plus NIFTY 50. The default
+is current and next expiry; optional Plus modes and plan limits are described below. REST is used for startup context
+and contract discovery every five minutes. TLS verification, TCP_NODELAY and TCP
+keepalive are enabled. Reconnect restores subscriptions without redundant requests.
+
+Capture pipeline:
+
+1. Socket callback timestamps and queues original binary Protobuf frames.
+2. A decoder thread processes frames and routes owned dictionaries to asyncio.
+3. Dedicated expiry/strike channels preserve CE/PE updates and second snapshots.
+4. One database writer combines all channels and raw frames into bounded-size
+   batches, waiting at most 50 ms to collect a batch. SQLite WAL and synchronous
+   FULL remain enabled. Actual commit latency depends on backlog and disk speed.
+5. A separate spawned process exports changed hourly Excel chunks every five
+   minutes. Closed, unchanged hours are skipped. Export uses a fixed event-ID
+   boundary; updates arriving during export are included in the next pass.
+
+All delivered option and index updates are retained. One-second snapshots repeat
+latest values with stale/connected flags and last receipt time. Streamed fields
+include OI, IV, Greeks, five-level depth, volume, prices/times and feed timestamp.
+`socket_received_at_ist` records callback arrival before decoding;
+`receive_to_dispatch_ms` measures local processing delay, not exchange latency.
+Nested objects are flattened; arrays remain JSON in Excel. REST context retains
+its original schema/units; no IV unit normalization is applied. REST strike-level
+PCR is `rest_strike_pcr`; full-expiry PCR is not calculated.
+
+Storage:
+
+- Journal: `capture.sqlite3`, with `events` and binary `raw_frames` tables.
+- Excel: `YYYY-MM-DD/HH/<expiry_epoch>_<strike>.xlsx` and `NIFTY50.xlsx`.
+- Export checkpoint: `excel-progress.json`; advance only after successful exports.
+- Health: `health.json`, refreshed every five seconds: queue depths, pending-write
+  age, last commit/decode times, committed event/frame counts, incoming bytes,
+  free disk space, connection state and latest export duration/result.
+
+`--min-free-gb` defaults to 1 GB. Low disk space stops capture and drains queues;
+final export is skipped below reserve. Unbounded queues avoid intentional drops,
+but sustained overload can exhaust memory. Disk errors stop capture. An OS crash,
+power failure, forced kill or write failure can lose queued/uncommitted frames.
+Raw replay can reconstruct only frames already committed to the journal. No
+exchange-level completeness, constant OI refresh rate or outage backfill is claimed.
+Only one recorder per output directory is allowed through an OS file lock.
+
+Gracefully stop (drains socket decoder, strike queues and writer, then exports):
+
+```powershell
+.venv/Scripts/python.exe record_upstox.py --stop
+```
+
+For a custom output directory pass the same `--output` to start and stop commands.
+Force-killing a process bypasses draining. Ctrl+C also initiates shutdown.
+
+Offline replay into a new output directory (does not authenticate/connect):
+
+```powershell
+.venv/Scripts/python.exe replay_upstox.py --source D:/market-data/volatility/upstox/capture.sqlite3 --output D:/market-data/volatility/replay
+```
+
+Replay reconstructs raw tick rows using saved contract mappings and socket receipt
+timestamps. It does not synthesize historical one-second snapshots or copy raw
+frames into the replay journal. Original source is opened read-only.
+
+Offline synthetic pipeline benchmark:
+
+```powershell
+.venv/Scripts/python.exe benchmark_capture.py --frames 10000
+```
+
+The benchmark uses generated five-level Protobuf frames across 147 strike channels,
+checks raw and decoded row counts, and reports throughput/commits. It never opens
+a market-data connection. Results are local synthetic throughput, not broker
+latency or a guarantee under real peak traffic.
+
+## Optional Plus capture profiles
+
+Implementation is ready; these commands do not run unless you invoke them.
+Default scope is the current and next NIFTY option expiry (`front_two`). All
+strikes/CE/PE in those two expiries are included. Normal full feed, raw Protobuf
+and one-second snapshots are enabled by default. Other feeds are opt-in.
+
+Example with the optional NIFTY features enabled:
+
+```powershell
+.venv/Scripts/python.exe record_upstox.py --expiry-scope front_two --context --depth-contracts 50 --analytics local,chain,oi,pcr,max-pain,fii,dii,calendar
+```
+
+| Option | Behavior |
+|---|---|
+| `--expiry-scope front_two` | Current + next option expiry; default |
+| `--expiry-scope current` | Current expiry only |
+| `--expiry-scope all` | All returned expiries, subject to documented capacity |
+| `--feed-mode full` | Prices, OI/IV/Greeks, five-level depth; default |
+| `--feed-mode option_greeks` | Broker's first-level/Greeks feed, including delivered OI/IV |
+| `--feed-mode ltpc` | Last-trade/close fields only; OI/IV are unavailable |
+| `--depth-contracts 0..50` | Upgrade nearest-expiry contracts nearest spot to D30; default 0 |
+| `--context` | Add streaming India VIX and exact-underlying active NIFTY futures |
+| `--analytics local` | Calculate per-expiry PCR/max pain from streamed OI once per second |
+| `--analytics chain,oi,pcr,max-pain` | Full REST chain (including POP/previous OI when supplied) and broker analytics for each selected expiry; refresh after each round +60s |
+| `--analytics fii,dii,calendar` | Daily institutional activity and session calendar snapshots |
+| `--no-snapshots` | Disable repeated one-second latest-value rows |
+| `--no-raw-frames` | Disable original Protobuf archival/replay |
+| `--no-ticks` | Disable decoded tick rows; selected snapshots/raw archival remain independent |
+
+Depth selection is deterministic: prioritize nearest expiry, then distance from
+spot. D30 is capped at 50 total instruments. The planner conservatively caps
+full/D30/context depth coverage together at 1500 in mixed mode; remaining contracts
+may use `option_greeks`, capped at 2000. No instruments are silently dropped: an
+oversized universe fails with an explicit message. D30 requires full feed mode.
+`coverage.json` lists every selected contract, its mode, futures, and mode counts.
+This records requested coverage, not a guarantee of broker delivery.
+
+Context and local analytics use WebSocket data. Supplemental REST analytics run
+independently from socket capture; they are not per-second broker values. Local
+PCR/max pain are withheld until all selected contracts have OI. Receipt timestamps
+are supplied for freshness assessment; a repeated value is not necessarily a new
+OI observation. No trading signals are implied by these metrics.
+
+REST calls use a persistent session, a global per-process pacing lock (at most
+about 3.3 requests/second), and a conservative 1800-requests/30-minute budget.
+Other programs using the same account can still consume the account's allowance.
+Rejected/unavailable optional endpoints are logged and visible in health status;
+stream capture continues. The calendar/FII/DII requests are once per day per run.
+The app stores full response payloads. Excel splits oversized text/JSON into
+`__part1`, `__part2`, etc. columns to avoid silent cell truncation; join parts in
+order to reconstruct the original value. The SQLite journal remains authoritative.
+Zero-valued protobuf scalar fields are explicitly decoded rather than omitted.
+
+Historical/expired candles are a separate explicit job; they never run with live
+capture automatically. Example for selected keys and dates:
+
+```powershell
+.venv/Scripts/python.exe capture_upstox_history.py --from 2026-11-02 --to 2026-11-06 --instruments 'NSE_INDEX|Nifty 50,NSE_INDEX|India VIX'
+```
+
+For an expired NIFTY option expiry, use `--expired-expiry YYYY-MM-DD` instead of
+`--instruments`. The command discovers contracts for that expiry, fetches 1-minute
+OHLCV/OI in <=28-day windows, then exports hourly workbooks. Output defaults to
+`D:/market-data/volatility/history`. It does not recover historical ticks, depth,
+or Greeks. Repeating a historical job currently appends another capture of its
+responses; use a distinct output directory when avoiding duplicate rows matters.
+
+This is NIFTY market-data capture. Portfolio/order execution, stock fundamentals,
+stock news and unrelated market universes are outside this capture profile.
+Optional Plus endpoints have offline implementation tests; availability and D30
+subscription acceptance still require a future user-requested live verification.

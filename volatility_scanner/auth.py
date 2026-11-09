@@ -65,8 +65,10 @@ def request_tokens(endpoint: str, payload: dict) -> dict:
     return result
 
 
-def save_tokens(env_file: Path, tokens: dict) -> None:
+def save_tokens(env_file: Path, tokens: dict, *, broker: str = "FYERS") -> None:
     """Replace token keys together, preserving other settings and existing file on failure."""
+    if broker not in ("FYERS", "UPSTOX"):
+        raise ValueError("Unsupported broker")
     with _lock:
         temporary = None
         try:
@@ -78,7 +80,7 @@ def save_tokens(env_file: Path, tokens: dict) -> None:
             for name in ("access_token", "refresh_token"):
                 value = tokens.get(name)
                 if isinstance(value, str) and value.strip():
-                    set_key(temporary, "FYERS_" + name.upper(), value, encoding="utf-8-sig")
+                    set_key(temporary, broker + "_" + name.upper(), value, encoding="utf-8-sig")
             os.replace(temporary, env_file)
         except OSError:
             raise AuthError("Could not save renewed tokens to .env. Existing configuration was preserved.") from None
@@ -86,7 +88,7 @@ def save_tokens(env_file: Path, tokens: dict) -> None:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
         for name in ("access_token", "refresh_token"):
-            key = "FYERS_" + name.upper()
+            key = broker + "_" + name.upper()
             if key in os.environ and isinstance(tokens.get(name), str) and tokens[name].strip():
                 os.environ[key] = tokens[name]
 

@@ -10,3 +10,4 @@ scanner.db
 !.env.example
 .streamlit/secrets.toml
 .idea/
+recordings/

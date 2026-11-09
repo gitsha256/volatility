@@ -2,3 +2,5 @@ streamlit>=1.30.0
 python-dotenv>=1.0,<2
 curl_cffi>=0.14,<1
 fyers-apiv3==3.2.1
+openpyxl>=3.1,<4
+upstox-python-sdk==2.30.0
