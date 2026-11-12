@@ -2,6 +2,8 @@
 
 This project implements a compact analytical engine for NIFTY futures + options screening based on the design in the technical brief.
 
+See [implemented features and API inventory](docs/implemented-features.md) for capture, algorithms, dashboards, WebSockets and the complete callable Upstox API list.
+
 ## Features
 
 - FYERS API v3 WebSocket futures and option bid/ask streaming
